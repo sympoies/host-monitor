@@ -10,7 +10,7 @@ const playwrightRoot=process.env.HOST_MONITOR_PLAYWRIGHT_ROOT;
 const require=createRequire(playwrightRoot?path.join(path.resolve(playwrightRoot),'package.json'):import.meta.url);const {chromium}=require('playwright');
 const browser=await chromium.launch({channel:'chrome',headless:false,chromiumSandbox:true});
 try{
- const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors:string[]=[];
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors:string[]=[];let checkedLogs=0;
  page.on('pageerror',(e:Error)=>errors.push(e.message));
  await page.goto(url);await page.locator('#hosts .host').first().waitFor();
  assert.equal(await page.locator('#hosts .host').count(),hosts.length);
@@ -28,13 +28,26 @@ try{
   await page.locator('#search').fill(sample);assert.ok(await page.locator('#services tr').count()>0);assert.ok((await page.locator('#services').innerText()).includes(sample));
   await page.locator('#search').fill('no-such-service-acceptance');assert.equal(await page.locator('#services tr').count(),0);assert.ok(await page.locator('#empty').isVisible());
   await page.locator('#search').fill('');await page.locator('#filter').selectOption('important');
+  const logUnit=await page.evaluate(async(host:string)=>{const h=(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((x:{name:string})=>x.name===host);return h?.logUnits?.[0]?.name as string|undefined;},host);
+  if(logUnit){
+   checkedLogs++;
+   await page.locator('#filter').selectOption('all');await page.locator('#search').fill(logUnit);
+   const response=page.waitForResponse((r:{url():string})=>r.url().includes('/api/logs?'));
+   await page.getByRole('button',{name:`查看 ${logUnit} 日誌`}).click();
+   assert.equal((await response).status(),200);assert.ok(await page.locator('#log-panel').isVisible());
+   await page.waitForFunction(()=>!document.querySelector('#log-body')?.textContent?.includes('讀取最近'));
+   assert.ok(!(await page.locator('#log-body').innerText()).includes('無法讀取'));
+   await page.locator('#log-close').click();assert.equal(await page.locator('#log-panel').isVisible(),false);
+   await page.locator('#search').fill('');await page.locator('#filter').selectOption('important');
+  }
   assert.equal(await page.locator('#connection').innerText(),'');
   await page.screenshot({path:out+'/'+host+'-desktop.png',fullPage:true});
  }
+ assert.ok(checkedLogs>0,'no configured service log unit was exercised');
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
  await page.screenshot({path:out+'/'+hosts.at(-1)+'-mobile.png',fullPage:true});
  assert.deepEqual(errors,[]);
- await fs.writeFile(out+'/browser-receipt.json',JSON.stringify({passed:true,hosts,checks:['real-installed-chrome','headed-X11','host-selection','live-resources','installed-inventory','search','empty-state','mobile-no-page-overflow','no-JS-errors']},null,2)+'\n');
+ await fs.writeFile(out+'/browser-receipt.json',JSON.stringify({passed:true,hosts,checks:['real-installed-chrome','headed-X11','host-selection','live-resources','installed-inventory','search','empty-state','allowlisted-log-view','mobile-no-page-overflow','no-JS-errors']},null,2)+'\n');
  console.log('Host Monitor browser acceptance passed');
 }finally{await browser.close();}

@@ -8,6 +8,53 @@ test('offline collectors retain the old snapshot without claiming fresh or healt
  });});
 test('identity mismatch never becomes a valid host snapshot',async()=>{await running(async()=>({stdout:JSON.stringify({...snapshot,host:'other'})}),async(m,base)=>{await m.refresh();const j=await (await fetch(base+'/api/fleet')).json() as any;assert.equal(j.hosts[0].status,'offline');assert.equal(j.hosts[0].snapshot,null);});});
 test('web server serves a closed asset inventory and rejects state changes',async()=>{await running(async()=>({stdout:JSON.stringify(snapshot)}),async(m,base)=>{assert.equal((await fetch(base+'/')).status,200);assert.equal((await fetch(base+'/api/fleet',{method:'POST'})).status,405);assert.equal((await fetch(base+'/%2e%2e/package.json')).status,404);const r=await fetch(base+'/app.js');assert.equal(r.status,200);assert.ok(r.headers.get('content-security-policy')!.includes("default-src 'self'"));});});
+test('service logs are fetched only for an online local host and an exact configured unit',async()=>{
+ const at=Date.parse(snapshot.collectedAt),calls:Array<[string,string[]]>=[];
+ const monitor=createMonitor({hosts:[{name:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json',logUnits:[{scope:'user',name:'web.service'}]}]},
+  {now:()=>at,run:async(file,args)=>{calls.push([file,args]);return {stdout:file==='journalctl'?'private journal line':JSON.stringify({...snapshot,platform:'linux',services:[{name:'web.service',scope:'user',health:'ok',active:'active'}]})};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');
+ try{await monitor.refresh();const base='http://127.0.0.1:'+port(monitor.server);
+  for(const query of ['host=missing&unit=web.service','host=c8&unit=other.service','host=c8&unit=web.service%3Bwhoami'])assert.equal((await fetch(base+'/api/logs?'+query)).status,404);
+  assert.equal(calls.length,1);
+  const response=await fetch(base+'/api/logs?host=c8&unit=web.service');assert.equal(response.status,200);
+  assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await response.json() as any).text,'private journal line');
+  assert.equal(calls.length,2);assert.equal(calls[1][0],'journalctl');assert.ok(calls[1][1].includes('web.service'));
+  assert.equal(JSON.stringify(await (await fetch(base+'/api/fleet')).json()).includes('private journal line'),false);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('log access fails closed on offline hosts, invalid configurations, and reader failure',async()=>{
+ const local={name:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
+ for(const logUnits of [[{scope:'user',name:'bad;unit.service'}],[{scope:'user',name:'web.service'},{scope:'user',name:'web.service'}],[{scope:'user',name:'web.service'},{scope:'system',name:'web.service'}],[{scope:'root',name:'web.service'}]])
+  assert.throws(()=>createMonitor({hosts:[{...local,logUnits}]}),/invalid-log-units/);
+ assert.throws(()=>createMonitor({hosts:[{...host,logUnits:[{scope:'user',name:'web.service'}]}]}),/invalid-log-units/);
+ let fail=false,read=false;
+ const monitor=createMonitor({hosts:[{...local,logUnits:[{scope:'user',name:'web.service'}]}]},
+  {now:()=>Date.parse(snapshot.collectedAt),run:async(file)=>{if(file==='journalctl'){read=true;throw Error('private diagnostic');}if(fail)throw Error('offline');return {stdout:JSON.stringify({...snapshot,platform:'linux',services:[{name:'web.service',scope:'user',health:'ok',active:'active'}]})};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');
+ try{const url='http://127.0.0.1:'+port(monitor.server)+'/api/logs?host=c8&unit=web.service';
+  assert.equal((await fetch(url)).status,503);assert.equal(read,false);
+  await monitor.refresh();const failed=await fetch(url);assert.equal(failed.status,502);assert.equal((await failed.text()).includes('private diagnostic'),false);
+  fail=true;await monitor.refresh();assert.equal((await fetch(url)).status,503);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('system journal scope uses fixed arguments and concurrent tails are capped',async()=>{
+ const local={name:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
+ let active=0,maxActive=0;const pending:(()=>void)[]=[];const argsSeen:string[][]=[];
+ const monitor=createMonitor({hosts:[{...local,logUnits:[{scope:'system',name:'web.service'}]}]},
+  {now:()=>Date.parse(snapshot.collectedAt),run:async(file,args)=>{
+   if(file!=='journalctl')return {stdout:JSON.stringify({...snapshot,platform:'linux',services:[{name:'web.service',scope:'system',health:'ok',active:'active'}]})};
+   argsSeen.push(args);active++;maxActive=Math.max(active,maxActive);
+   await new Promise<void>(resolve=>pending.push(resolve));active--;return {stdout:'bounded log'};
+  }});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');
+ try{await monitor.refresh();const url='http://127.0.0.1:'+port(monitor.server)+'/api/logs?host=c8&unit=web.service';
+  const first=fetch(url),second=fetch(url);
+  while(pending.length<2)await new Promise(r=>setTimeout(r,1));
+  assert.equal((await fetch(url)).status,429);assert.equal(maxActive,2);
+  assert.deepEqual(argsSeen[0],['--system','--unit','web.service','--lines','120','--no-pager','--output=short-iso','--quiet']);
+  pending.splice(0).forEach(resolve=>resolve());assert.equal((await first).status,200);assert.equal((await second).status,200);
+ }finally{pending.splice(0).forEach(resolve=>resolve());monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
 test('fresh receipt cannot make an old or future snapshot appear current',async()=>{let clock=Date.parse(snapshot.collectedAt);const monitor=createMonitor({hosts:[host]},{now:()=>clock,run:async()=>({stdout:JSON.stringify(snapshot)})});monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const base='http://127.0.0.1:'+port(monitor.server);assert.equal((await (await fetch(base+'/api/fleet')).json() as any).hosts[0].stale,false);clock+=61000;await monitor.refresh();assert.equal((await (await fetch(base+'/api/fleet')).json() as any).hosts[0].stale,true);}finally{await new Promise(r=>monitor.server.close(r));}});
 
 test('unknown top-level and nested collector fields never reach the browser API',async()=>{const canary='private-canary-value';const input={...snapshot,rawJournal:canary,hardware:{...snapshot.hardware,environment:canary},services:[{name:'web.service',scope:'user',health:'ok',active:'active',auth:canary}],containers:[{name:'web',state:'running',environment:canary}]};await running(async()=>({stdout:JSON.stringify(input)}),async(m,base)=>{await m.refresh();const r=await fetch(base+'/api/fleet');const text=await r.text();assert.equal(text.includes(canary),false);assert.equal(JSON.parse(text).hosts[0].status,'online');});});

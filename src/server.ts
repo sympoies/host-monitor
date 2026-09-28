@@ -12,14 +12,24 @@ import {promisify} from 'node:util';
 export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:number;encoding:'utf8'})=>Promise<{stdout:string}>;
 // A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
-export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown}
+interface LogUnit{name:string;scope:'user'|'system'}
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown}
 export interface ServerConfig{hosts:HostEntry[];port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
-interface Host extends HostEntry{importantServices:string[];refreshSeconds:number;timeoutSeconds:number}
-interface HostState{name:string;importantServices:string[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
+interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number}
+interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
 const exec=promisify(execFile) as Runner,root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../public');
 const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/style.css',['style.css','text/css']]]);
 // Service-name substrings that the dashboard lists under its default "important services" filter.
 function serviceMarkers(value:unknown=[]):string[]{if(!Array.isArray(value)||value.length>100||value.some(v=>typeof v!=='string'||!/^[a-zA-Z0-9_.:@-]{1,128}$/.test(v)))throw new Error('invalid-important-services');return [...value];}
+// Only locally collected Linux units may expose a journal tail. The configured exact names, never a browser value,
+// are the command's unit arguments. No messages enter snapshots or persistent event state.
+function logUnits(value:unknown=[]):LogUnit[]{
+ if(!Array.isArray(value)||value.length>100||value.some(v=>!v||typeof v!=='object'||Array.isArray(v)||
+  !['user','system'].includes((v as LogUnit).scope)||typeof (v as LogUnit).name!=='string'||
+  !/^[A-Za-z0-9][A-Za-z0-9@._-]{0,126}\.service$/.test((v as LogUnit).name)))throw new Error('invalid-log-units');
+ const units=value as LogUnit[];if(new Set(units.map(v=>v.name)).size!==units.length)throw new Error('invalid-log-units');
+ return units.map(v=>({scope:v.scope,name:v.name}));
+}
 const seconds=(value:unknown,fallback:unknown,min:number,max:number)=>{const v=value??fallback;if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max)throw new Error('invalid-hosts');return v;};
 function alertOptions(value:unknown) {
  if(value===undefined)return null;
@@ -36,16 +46,17 @@ function alertOptions(value:unknown) {
 export interface MonitorOptions{run?:Runner;now?:()=>number;fetch?:NotifierOptions['fetchImpl'];sleep?:NotifierOptions['sleep'];env?:Record<string,string|undefined>;log?:(message:string)=>void}
 export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),fetch:fetchImpl=fetch,sleep,env=process.env,log=message=>console.error(message)}:MonitorOptions={}) {
  const defaultRefresh=config.refreshSeconds??20;
- const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600)}));
+ const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600)}));
  if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
+ if(hosts.some(h=>h.logUnits.length>0&&(h.ssh!==undefined||h.adb!==undefined)))throw new Error('invalid-log-units');
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
  const stateDir=config.stateDir as string|undefined;
  const alerts=alertOptions(config.alerts);
- const state=new Map<string,HostState>(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,refreshSeconds:h.refreshSeconds,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
+ const state=new Map<string,HostState>(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
  const history=createHistory({dir:stateDir,maxBytes:config.historyMaxBytes,log});
  const notifier=alerts&&createNotifier({url:alerts.webhookUrl,authEnv:alerts.authEnv,env,kinds:alerts.kinds,quietHours:alerts.quietHours,fetchImpl,...(sleep?{sleep}:{}),log});
  const stateFile=stateDir&&path.join(stateDir,'alert-state.json');
- let tracker=createTracker({offlineAfterMs:alerts?.offlineAfterMs??300000}),saving=Promise.resolve();
+ let tracker=createTracker({offlineAfterMs:alerts?.offlineAfterMs??300000}),saving=Promise.resolve(),activeLogReads=0;
  // Saved attention state keeps a restart from re-announcing items that were already notified.
  const ready=(async()=>{try{await history.load();if(stateFile){const saved:unknown=JSON.parse(await fs.readFile(stateFile,'utf8').catch(()=>'{}'));tracker=createTracker({offlineAfterMs:alerts?.offlineAfterMs??300000,state:saved&&typeof saved==='object'?saved as TrackerState:{}});}}catch{log('host-monitor: state unavailable; starting without history');}})();
  function record(events:AlertEvent[]) {
@@ -78,7 +89,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   const h=hosts.find(h=>h.name===name);if(!h)return Promise.reject(new Error('unknown-host'));
   const pending=inflight.get(name);if(pending)return pending;
   const attempt=(async()=>{await ready;const old=state.get(name)!,at=new Date(now()).toISOString();
-   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now()));}
+   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now()));}
    catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
     // A detached adb device is an expected state, like a sleeping laptop: it shows offline but never raises an offline alert.
     if(h.adb===undefined)record(tracker.offline(name,now()));}
@@ -100,6 +111,27 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    const limit=url.searchParams.has('limit')?Number(url.searchParams.get('limit')):100,host=url.searchParams.get('host')??undefined;
    if(!Number.isInteger(limit)||limit<1||limit>500||host!==undefined&&!state.has(host)){res.writeHead(400);res.end();return;}
    await ready;body=JSON.stringify({schemaVersion:1,events:history.recent({limit,host})});type='application/json';
+  }
+  else if(url.pathname==='/api/logs'){
+   if(req.method!=='GET'){res.writeHead(405,{Allow:'GET'});res.end();return;}
+   const hostNames=url.searchParams.getAll('host'),unitNames=url.searchParams.getAll('unit');
+   if(hostNames.length!==1||unitNames.length!==1||[...url.searchParams.keys()].some(k=>k!=='host'&&k!=='unit')){res.writeHead(400);res.end();return;}
+   const host=hosts.find(h=>h.name===hostNames[0]),unit=host?.logUnits.find(u=>u.name===unitNames[0]);
+   if(!host||!unit){res.writeHead(404);res.end();return;}
+   const current=state.get(host.name)!;
+   if(current.status!=='online'||stale(current)||current.snapshot?.platform!=='linux'||
+    !current.snapshot.services.some(s=>s.name===unit.name&&s.scope===unit.scope)){
+    res.writeHead(503);res.end();return;
+   }
+   if(activeLogReads>=2){res.writeHead(429);res.end();return;}
+   activeLogReads++;
+   try{
+    const args=[unit.scope==='user'?'--user':'--system','--unit',unit.name,'--lines','120','--no-pager','--output=short-iso','--quiet'];
+    const text=(await run('journalctl',args,{timeout:5000,maxBuffer:256*1024,encoding:'utf8'})).stdout;
+    if(Buffer.byteLength(text)>256*1024)throw new Error('oversized-journal');
+    body=JSON.stringify({schemaVersion:1,host:host.name,unit:unit.name,text});type='application/json';
+   }catch{res.writeHead(502);res.end();return;}
+   finally{activeLogReads--;}
   }
   else if(assets.has(url.pathname)){const [file,mime]=assets.get(url.pathname)!;try{body=await fs.readFile(path.join(root,file));type=mime;}catch{res.writeHead(503);res.end();return;}}
   else{res.writeHead(404);res.end();return;}
