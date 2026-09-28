@@ -3,7 +3,7 @@ import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {pathToFileURL} from 'node:url';
-import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFor} from './model.mjs';
+import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFor,parseContainers,parseGpus,loopbackProbeUrl} from './model.mjs';
 const exec=promisify(execFile);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function command(bin,args) {return (await exec(bin,args,{timeout:10000,maxBuffer:8*1024*1024,encoding:'utf8',env:{...process.env,LC_ALL:'C'}})).stdout;}
@@ -34,11 +34,11 @@ export async function journal(scope,run=command) {
 }
 async function containers() {
  const text=await command('docker',['ps','-a','--format','{"name":{{json .Names}},"image":{{json .Image}},"state":{{json .State}},"status":{{json .Status}}}']);
- return text.trim().split('\n').filter(Boolean).map(line=>{const c=JSON.parse(line);return {...c,health:c.status.includes('(unhealthy)')?'unhealthy':c.status.includes('(healthy)')?'healthy':'not-configured'};});
+ return parseContainers(text);
 }
 async function gpu() {
  const text=await command('nvidia-smi',['--query-gpu=name,utilization.gpu,memory.total,memory.used,temperature.gpu','--format=csv,noheader,nounits']);
- return text.trim().split('\n').filter(Boolean).map(line=>{const [name,busy,total,used,temp]=line.split(',').map(v=>v.trim());return {name,busy:Number(busy),memoryTotal:Number(total)*1024*1024,memoryUsed:Number(used)*1024*1024,temperature:Number(temp)};});
+ return parseGpus(text);
 }
 export async function collect(config) {
  if(config.name!==os.hostname())throw new Error('host-identity-mismatch');
@@ -55,7 +55,7 @@ export async function collect(config) {
   ]),
   ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
   ...(config.nvidia?[part('GPU',gpu,v=>result.gpus=v)]:[]),
-  ...((config.probes??[]).map(async probe=>{const u=new URL(probe.url);if(!['127.0.0.1','localhost','[::1]'].includes(u.hostname)||u.protocol!=='http:')throw new Error('probe-must-be-loopback');try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}})),
+  ...((config.probes??[]).map(async probe=>{const u=loopbackProbeUrl(probe.url);try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}})),
  ]);
  for(const name of config.requiredContainers??[]){const c=result.containers.find(c=>c.name===name);if(!c)result.containers.push({name,image:'Configured service',state:'missing',status:'Container missing',health:'unhealthy'});else if(c.state!=='running')c.health='unhealthy';}
  result.services.sort((a,b)=>a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name));result.attention=attentionFor(result);return result;

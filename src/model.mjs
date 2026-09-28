@@ -40,3 +40,12 @@ export function attentionFor(snapshot) {
   for(const entry of snapshot.journalErrors??[]) events.push({severity:'warning',kind:'journal',title:entry.unit,detail:`${entry.count} errors in the last hour`});
   return events;
 }
+export function parseContainers(text) {
+  return text.trim().split('\n').filter(Boolean).map(line=>{const c=JSON.parse(line);return {...c,health:c.status.includes('(unhealthy)')?'unhealthy':c.status.includes('(healthy)')?'healthy':'not-configured'};});
+}
+export function parseGpus(text) {
+  return text.trim().split('\n').filter(Boolean).map(line=>{const [name,busy,total,used,temp]=line.split(',').map(v=>v.trim());return {name,busy:Number(busy),memoryTotal:Number(total)*1024*1024,memoryUsed:Number(used)*1024*1024,temperature:Number(temp)};});
+}
+export function loopbackProbeUrl(value) {
+  const u=new URL(value);if(!['127.0.0.1','localhost','[::1]'].includes(u.hostname)||u.protocol!=='http:')throw new Error('probe-must-be-loopback');return u;
+}
