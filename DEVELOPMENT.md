@@ -73,7 +73,7 @@ Example server configuration:
 
 ## Releases
 
-A release is the immutable artifact from `scripts/build-artifact.mjs`, identified by its artifact id: the SHA-256 content hash recorded as `artifact` in its `manifest.json`. To cut one, merge a change that sets `package.json` `version` and adds its `CHANGELOG.md` entry, then push the matching tag from the merged commit on `main`:
+A release is the immutable artifact from `scripts/build-artifact.mjs`, identified by its artifact id: the SHA-256 content hash recorded as `artifact` in its `manifest.json`. To cut one, merge a change that sets `package.json` `version` and adds its release entry to the development log (`docs/devlog/`; this repository keeps no `CHANGELOG.md`), then push the matching tag from the merged commit on `main`:
 
 ```sh
 git tag -s v<version> -m v<version> <merged-main-commit>
@@ -88,6 +88,8 @@ The `release` workflow runs `npm run validate`, refuses a tag that differs from 
 - `SHA256SUMS`: checksums of the four files above.
 
 Archive timestamps come from the tagged commit, so rebuilding the same tag reproduces the same tarball bytes.
+
+The workflow writes the release notes itself: the artifact id, the install steps, the `SHA256SUMS` contents, and a link to `docs/devlog/` at the tag, where the release entry describes the changes.
 
 An infrastructure repository pins the release by both version and artifact id, and installs it with Node 24 or newer:
 
