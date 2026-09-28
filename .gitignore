@@ -2,3 +2,5 @@ node_modules/
 .cache/
 .env
 coverage/
+# Emitted from public/app.ts by `npm run build`; the artifact build emits its own copy.
+public/app.js

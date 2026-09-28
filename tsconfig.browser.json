@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "preserve",
+    "moduleDetection": "legacy",
+    "types": [],
+    "strict": true,
+    "rootDir": "public",
+    "outDir": "public",
+    "newLine": "lf",
+    "removeComments": false,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "files": ["public/app.ts"]
+}

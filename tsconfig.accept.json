@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {"lib": ["es2024", "dom"]},
+  "include": [],
+  "files": ["scripts/accept-browser.ts"]
+}

@@ -3,7 +3,7 @@
 # Usage: package-release.sh OUTPUT TAG
 #   OUTPUT  directory to create; it must not exist yet
 #   TAG     release tag; must equal v<package.json version>
-# Writes host-monitor-<version>-<artifact>.tar.gz, verify-artifact.mjs,
+# Writes host-monitor-<version>-<artifact>.tar.gz, verify-artifact.mts,
 # install-release.sh, artifact-id and SHA256SUMS to OUTPUT and prints a JSON
 # summary. SOURCE_DATE_EPOCH (default 0) fixes archive timestamps so the same
 # source reproduces the same tarball bytes. Requires GNU tar, gzip, sha256sum.
@@ -19,18 +19,18 @@ epoch=${SOURCE_DATE_EPOCH:-0}
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-artifact=$("$node" "$root/scripts/build-artifact.mjs" "$stage/build" | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).artifact))')
-"$node" "$root/scripts/verify-artifact.mjs" "$stage/build" "$artifact" >/dev/null
+artifact=$("$node" "$root/scripts/build-artifact.ts" "$stage/build" | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).artifact))')
+"$node" "$root/scripts/verify-artifact.mts" "$stage/build" "$artifact" >/dev/null
 name="host-monitor-$version-$artifact"
 mv "$stage/build" "$stage/$name"
 
 mkdir -p "$stage/assets"
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" \
   --mode='u+rwX,go+rX,go-w' -C "$stage" -cf - "$name" | gzip -n -9 >"$stage/assets/$name.tar.gz"
-install -m 644 "$root/scripts/verify-artifact.mjs" "$stage/assets/verify-artifact.mjs"
+install -m 644 "$root/scripts/verify-artifact.mts" "$stage/assets/verify-artifact.mts"
 install -m 755 "$root/scripts/install-release.sh" "$stage/assets/install-release.sh"
 printf '%s\n' "$artifact" >"$stage/assets/artifact-id"
-(cd "$stage/assets" && sha256sum -- "$name.tar.gz" artifact-id install-release.sh verify-artifact.mjs >SHA256SUMS)
+(cd "$stage/assets" && sha256sum -- "$name.tar.gz" artifact-id install-release.sh verify-artifact.mts >SHA256SUMS)
 
 mkdir -p "$(dirname "$out")"
 mv "$stage/assets" "$out"

@@ -19,6 +19,6 @@ notes = "Development log conventions and month index; read before a release or w
 
 [[validation]]
 context = "project-dev"
-commands = ["npm run validate"]
+commands = ["npm ci", "npm run validate"]
 marker = ".cache/agent-validation/project-dev.ok"
-description = "Run the repository-owned source validation: syntax checks and all deterministic tests."
+description = "Install the pinned dev dependencies, then run the repository-owned source validation: strict type checking, shell syntax, the browser build, and all deterministic tests."

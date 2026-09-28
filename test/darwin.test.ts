@@ -1,15 +1,15 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
-import {parseLaunchdServices,parseLaunchdJob,classifyLaunchdJob,hostIdentityMatches} from '../src/model.mjs';
-import {collectLaunchd,launchdLogErrors,collect,streamLines} from '../src/collector.mjs';
-import {projectSnapshot} from '../src/schema.mjs';
+import {parseLaunchdServices,parseLaunchdJob,classifyLaunchdJob,hostIdentityMatches} from '../src/model.ts';import type {LaunchdJob} from '../src/model.ts';
+import {collectLaunchd,launchdLogErrors,collect,streamLines} from '../src/collector.ts';
+import {projectSnapshot} from '../src/schema.ts';
 // Fixtures are recorded macOS 26 `launchctl print` and `log show --style ndjson` output with labels, paths and messages replaced.
-const fixture=name=>fs.readFileSync(path.join(import.meta.dirname,'fixtures/darwin',name),'utf8');
-const details={'com.example.tunnel':'launchctl-print-tunnel.txt','com.example.sync':'launchctl-print-sync.txt','com.example.broken':'launchctl-print-broken.txt','com.example.stopped':'launchctl-print-stopped.txt','org.example.daemon':'launchctl-print-daemon.txt'};
-function launchctl({guiDomain=true}={}){const calls=[];const run=async(bin,args)=>{calls.push([bin,...args].join(' '));assert.equal(bin,'launchctl');assert.equal(args[0],'print');const target=args[1];
+const fixture=(name:string)=>fs.readFileSync(path.join(import.meta.dirname,'fixtures/darwin',name),'utf8');
+const details:Record<string,string>={'com.example.tunnel':'launchctl-print-tunnel.txt','com.example.sync':'launchctl-print-sync.txt','com.example.broken':'launchctl-print-broken.txt','com.example.stopped':'launchctl-print-stopped.txt','org.example.daemon':'launchctl-print-daemon.txt'};
+function launchctl({guiDomain=true}={}){const calls:string[]=[];const run=async(bin:string,args:string[])=>{calls.push([bin,...args].join(' '));assert.equal(bin,'launchctl');assert.equal(args[0],'print');const target=args[1];
  if(target==='gui/501'){if(!guiDomain)throw Error('Domain does not support specified action');return fixture('launchctl-print-gui.txt');}
  if(target==='user/501')return fixture('launchctl-print-gui.txt').replace('gui/501 = {','user/501 = {');
  if(target==='system')return fixture('launchctl-print-system.txt');
- const label=target.split('/').pop();if(details[label])return fixture(details[label]);throw Object.assign(Error('Command failed'),{code:113,stderr:fixture('launchctl-print-missing.txt')});};return {run,calls};}
+ const label=target.split('/').pop()??'';if(details[label])return fixture(details[label]);throw Object.assign(Error('Command failed'),{code:113,stderr:fixture('launchctl-print-missing.txt')});};return {run,calls};}
 const requiredUser=['com.example.tunnel','com.example.sync','com.example.broken','com.example.stopped','com.example.missing'];
 const canary=/private-canary|\/Users\//;
 
@@ -32,7 +32,7 @@ test('launchctl job detail reads only allowlisted top-level fields and never env
  assert.equal(parseLaunchdJob(fixture('launchctl-print-daemon.txt')).exitCode,null);
 });
 test('launchd health follows the systemd rules: only required jobs that stop or exit non-zero need attention',()=>{
- const job=(o)=>({state:'not running',exitCode:null,signal:null,periodic:false,installed:'loaded',...o});
+ const job=(o:Partial<LaunchdJob>)=>({state:'not running',exitCode:null,signal:null,periodic:false,installed:'loaded',...o});
  assert.equal(classifyLaunchdJob(job({state:'running',exitCode:255}),true),'ok');
  assert.equal(classifyLaunchdJob(job({exitCode:0,periodic:true}),true),'idle');
  assert.equal(classifyLaunchdJob(job({exitCode:0}),true),'error');
@@ -60,12 +60,12 @@ test('user agents come from the gui domain with detail only for required labels'
 });
 test('system daemons are read from the system domain without privileges and fall back to the user domain for agents',async()=>{
  let {run,calls}=launchctl();const system=await collectLaunchd('system',['org.example.daemon'],{uid:501,run});
- assert.equal(system.services.find(s=>s.name==='org.example.daemon').health,'ok');assert.equal(system.services.find(s=>s.name==='org.example.daemon').type,'LaunchDaemon');assert.deepEqual(calls,['launchctl print system','launchctl print system/org.example.daemon']);
+ assert.equal(system.services.find(s=>s.name==='org.example.daemon')!.health,'ok');assert.equal(system.services.find(s=>s.name==='org.example.daemon')!.type,'LaunchDaemon');assert.deepEqual(calls,['launchctl print system','launchctl print system/org.example.daemon']);
  ({run,calls}=launchctl({guiDomain:false}));const user=await collectLaunchd('user',['com.example.tunnel'],{uid:501,run});
- assert.equal(user.services.find(s=>s.name==='com.example.tunnel').health,'ok');assert.deepEqual(calls,['launchctl print gui/501','launchctl print user/501','launchctl print user/501/com.example.tunnel']);
+ assert.equal(user.services.find(s=>s.name==='com.example.tunnel')!.health,'ok');assert.deepEqual(calls,['launchctl print gui/501','launchctl print user/501','launchctl print user/501/com.example.tunnel']);
 });
 test('log errors are counted per required job process and message text never leaves the collector',async()=>{
- const seen=[];const stream=async(bin,args,onLine)=>{seen.push([bin,...args]);for(const line of fixture('log-show-errors.ndjson').split('\n'))onLine(line);};
+ const seen:string[][]=[];const stream=async(bin:string,args:string[],onLine:(line:string)=>void)=>{seen.push([bin,...args]);for(const line of fixture('log-show-errors.ndjson').split('\n'))onLine(line);};
  const rows=await launchdLogErrors([{label:'com.example.tunnel',scope:'user',process:'ssh'},{label:'org.example.daemon',scope:'system',process:'example-daemon'},{label:'com.example.quiet',scope:'user',process:'quiet'},{label:'com.example.bad',scope:'user',process:'x" OR 1==1'}],{uid:501,stream});
  assert.deepEqual(rows,[{unit:'com.example.tunnel',scope:'user',process:'ssh',count:2,lastAt:'2026-09-28T12:11:50.414Z'},{unit:'org.example.daemon',scope:'system',process:'example-daemon',count:1,lastAt:'2026-09-28T11:30:00.000Z'}]);
  assert.equal(seen.length,1);const [bin,...args]=seen[0];assert.equal(bin,'/usr/bin/log');
@@ -84,7 +84,7 @@ test('host identity compares short hostnames case-insensitively or an explicit i
  assert.equal(hostIdentityMatches('c8.example.com',{name:'c8'}),false);
 });
 test('a macOS snapshot reports launchd services, log counts and external resources without collection failures',async()=>{
- const {run,calls}=launchctl();const stream=async(_bin,_args,onLine)=>{for(const line of fixture('log-show-errors.ndjson').split('\n'))onLine(line);};
+ const {run,calls}=launchctl();const stream=async(_bin:string,_args:string[],onLine:(line:string)=>void)=>{for(const line of fixture('log-show-errors.ndjson').split('\n'))onLine(line);};
  const config={name:'m4',identity:'MacBook',required:{user:['com.example.tunnel','com.example.broken'],system:['org.example.daemon']}};
  const s=await collect(config,{platform:'darwin',hostname:'MacBook.local',uid:501,run,stream});
  assert.equal(s.schemaVersion,1);assert.equal(s.host,'m4');assert.equal(s.platform,'darwin');assert.equal(s.resources,'external');
@@ -97,7 +97,7 @@ test('a macOS snapshot reports launchd services, log counts and external resourc
  await assert.rejects(collect({...config,identity:undefined},{platform:'darwin',hostname:'MacBook.local',uid:501,run,stream}),/host-identity-mismatch/);
 });
 test('streamed command output is delivered by line and bounded by time and line count',async()=>{
- const lines=[];await streamLines(process.execPath,['-e','process.stdout.write("a\\nb\\n");setTimeout(()=>process.stdout.write("c"),20)'],l=>lines.push(l));assert.deepEqual(lines,['a','b','c']);
+ const lines:string[]=[];await streamLines(process.execPath,['-e','process.stdout.write("a\\nb\\n");setTimeout(()=>process.stdout.write("c"),20)'],l=>lines.push(l));assert.deepEqual(lines,['a','b','c']);
  await assert.rejects(streamLines(process.execPath,['-e','setTimeout(()=>{},5000)'],()=>{},{timeout:100}),/command-timeout/);
  await assert.rejects(streamLines(process.execPath,['-e','for(let i=0;i<50;i++)console.log(i)'],()=>{},{maxLines:10}),/command-output-limit/);
  await assert.rejects(streamLines(process.execPath,['-e','process.exit(3)'],()=>{}),/command-failed/);
