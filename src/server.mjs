@@ -29,7 +29,7 @@ export function createMonitor(config,{run=exec,now=()=>Date.now(),fetch:fetchImp
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
  const alerts=alertOptions(config.alerts);
  const state=new Map(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,refreshSeconds:h.refreshSeconds,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
- const history=createHistory({dir:config.stateDir,maxBytes:config.historyMaxBytes});
+ const history=createHistory({dir:config.stateDir,maxBytes:config.historyMaxBytes,log});
  const notifier=alerts&&createNotifier({url:alerts.webhookUrl,authEnv:alerts.authEnv,env,kinds:alerts.kinds,quietHours:alerts.quietHours,fetchImpl,...(sleep?{sleep}:{}),log});
  const stateFile=config.stateDir&&path.join(config.stateDir,'alert-state.json');
  let tracker=createTracker({offlineAfterMs:alerts?.offlineAfterMs??300000}),saving=Promise.resolve();

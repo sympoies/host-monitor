@@ -22,7 +22,7 @@ The server records attention transitions: a new attention item, a recovered item
 
 The optional `stateDir` is an absolute path to a private directory that holds two files:
 
-- `events.jsonl`: the append-only transition log. It is rotated to `events.1.jsonl` when it would exceed `historyMaxBytes` (default 1 MiB), so at most two files are kept.
+- `events.jsonl`: the append-only transition log. It is rotated to `events.1.jsonl` when it would exceed `historyMaxBytes` (default 1 MiB), so at most two files are kept. Each write re-reads the current file size, so a file removed or truncated outside the server is recreated; the server logs one fixed-string warning per failure streak.
 - `alert-state.json`: the active items per host. A restart therefore neither re-announces items that were already notified nor misses items that changed meanwhile.
 
 Without `stateDir`, the most recent 500 events are kept in memory only. A host seen for the first time without saved state becomes a silent baseline.

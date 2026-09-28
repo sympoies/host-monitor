@@ -105,3 +105,16 @@ test('alert configuration rejects unsafe webhooks and never needs a token value'
  for(const alerts of [{webhookUrl:'https://api.telegram.org/bot123/sendMessage'},{webhookUrl:'http://127.0.0.1:8000/notify',authEnv:'lower-case'},{webhookUrl:'http://127.0.0.1:8000/notify',quietHours:{start:'x',end:'07:00'}},{webhookUrl:'http://127.0.0.1:8000/notify',kinds:['service','bogus kind!']},{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:-1}])assert.throws(()=>createMonitor({hosts:[host],alerts}),/invalid-alerts/);
  assert.throws(()=>createMonitor({hosts:[host],stateDir:'relative/dir'}),/invalid-state-dir/);
 });
+test('history keeps persisting after events.jsonl is removed externally and reports it once with a fixed warning',async()=>{
+ const dir=await tmp();try{
+  const warnings=[];const h=createHistory({dir,maxBytes:600,keep:100,log:m=>warnings.push(m)});await h.load();
+  const ev=i=>({at:new Date(T0+i*1000).toISOString(),host:'c8',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});
+  for(let i=0;i<4;i++)h.add(ev(i));await h.flush();
+  await fs.rm(path.join(dir,'events.jsonl'));
+  for(let i=4;i<12;i++)h.add(ev(i));await h.flush();
+  const again=createHistory({dir,maxBytes:600,keep:100});await again.load();const titles=again.recent({limit:100}).map(e=>e.title);
+  assert.equal(titles[0],'unit-11');for(const t of ['unit-4','unit-5','unit-10'])assert.ok(titles.includes(t),t+' persisted');
+  for(const f of await fs.readdir(dir))assert.ok((await fs.stat(path.join(dir,f))).size<=600);
+  assert.deepEqual(warnings,['host-monitor: history file missing; recreated']);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

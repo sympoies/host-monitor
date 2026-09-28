@@ -103,8 +103,18 @@ export function createNotifier({url,authEnv,env=process.env,kinds=DEFAULT_ALERT_
 }
 
 // Append-only JSONL of transitions, rotated to one previous file once the current file would exceed maxBytes.
-export function createHistory({dir,maxBytes=1048576,keep=500}={}) {
- const file=dir&&path.join(dir,'events.jsonl'),previous=dir&&path.join(dir,'events.1.jsonl');let events=[],size=0,chain=Promise.resolve();
+// Each write re-reads the current file size, so a file removed or truncated outside the server is recreated instead of
+// wedging rotation. Failures are reported once per streak with fixed strings that never carry paths or error text.
+export function createHistory({dir,maxBytes=1048576,keep=500,log=()=>{}}={}) {
+ const file=dir&&path.join(dir,'events.jsonl'),previous=dir&&path.join(dir,'events.1.jsonl');let events=[],size=0,chain=Promise.resolve(),warned=null;
+ const warn=message=>{if(warned!==message){warned=message;log(message);}};
+ async function write(line,bytes) {
+  const current=await fs.stat(file).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+  if(!current&&size>0)warn('host-monitor: history file missing; recreated');
+  size=current?.size??0;
+  if(size>0&&size+bytes>maxBytes){await fs.rename(file,previous).catch(error=>{if(error.code!=='ENOENT')throw error;});size=0;}
+  await fs.appendFile(file,line,{mode:0o600});size+=bytes;warned=null;
+ }
  const project=e=>{if(!e||typeof e!=='object')return null;const out={at:bounded(e.at,64),host:bounded(e.host,256),type:bounded(e.type,32),kind:bounded(e.kind,64),title:bounded(e.title),severity:bounded(e.severity,32),detail:bounded(e.detail)};
   if(!out.at||!Number.isFinite(Date.parse(out.at))||!out.host||!['attention','recovered','offline','online'].includes(out.type)||!out.kind||!out.title)return null;if(out.detail===undefined)delete out.detail;return out;};
  async function load() {
@@ -115,7 +125,7 @@ export function createHistory({dir,maxBytes=1048576,keep=500}={}) {
  function add(event) {
   const e=project(event);if(!e)return;events.push(e);if(events.length>keep)events.shift();if(!dir)return;
   const line=JSON.stringify(e)+'\n',bytes=Buffer.byteLength(line);
-  chain=chain.then(async()=>{if(size>0&&size+bytes>maxBytes){await fs.rename(file,previous);size=0;}await fs.appendFile(file,line,{mode:0o600});size+=bytes;}).catch(()=>{});
+  chain=chain.then(()=>write(line,bytes)).catch(()=>warn('host-monitor: history write failed'));
  }
  const recent=({limit=100,host}={})=>events.filter(e=>!host||e.host===host).slice(-limit).reverse();
  return {load,add,recent,flush:()=>chain};
