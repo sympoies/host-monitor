@@ -11,8 +11,9 @@ export interface Message{title:string;body:string;type:string;format?:string}
 type Fetch=(input:URL,init:RequestInit)=>Promise<Pick<Response,'ok'|'status'>&{body?:{cancel?:()=>Promise<void>}|null}>;
 type Log=(message:string)=>void;
 
-// Beszel owns resource thresholds; by default host-monitor notifies only for service-semantic attention.
-export const DEFAULT_ALERT_KINDS=['service','unit','container','probe'];
+// Beszel owns resource thresholds; by default host-monitor notifies for service-semantic attention and for Android
+// device attention, which Beszel cannot collect (fleet-infra decision 0003).
+export const DEFAULT_ALERT_KINDS=['service','unit','container','probe','device'];
 export const MESSAGE_PREFIX='[host-monitor]';
 const key=(kind:string,title:string)=>kind+'\0'+title;
 const bounded=(v:unknown,max=512)=>typeof v==='string'&&v.length<=max?v:undefined;

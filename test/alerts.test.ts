@@ -119,3 +119,9 @@ test('history keeps persisting after events.jsonl is removed externally and repo
   assert.deepEqual(warnings,['host-monitor: history file missing; recreated']);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+test('Android device attention is notified by default; generic disk and memory kinds stay with Beszel',async()=>{
+ const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl,sleep:async()=>{}});
+ const t=createTracker();t.online('s22',[],T0);
+ n.submit(t.online('s22',[{severity:'error',kind:'device',title:'Battery temperature',detail:'46.0 °C'},{severity:'warning',kind:'disk',title:'/',detail:'90% used'}],T0+1),T0+1);await n.idle();
+ assert.deepEqual(calls.map(c=>c.body),[{title:'[host-monitor] s22: device needs attention',body:'Battery temperature — 46.0 °C',type:'failure',format:'text'}]);
+});

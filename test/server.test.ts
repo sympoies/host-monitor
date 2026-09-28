@@ -23,3 +23,28 @@ test('remote collector commands outside the ssh allowlist never reach the runner
  monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
  assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status,h.snapshot]),[['bad0','offline',null],['bad1','offline',null],['bad2','offline',null],['bad3','offline',null]]);assert.equal(calls.length,0);}finally{await new Promise(r=>monitor.server.close(r));}
 });
+test('an adb host is collected by the server with one adb shell call and parsed in-process',async()=>{
+ const adbOutput=(await import('node:fs')).readFileSync(new URL('./fixtures/android/adb-shell.txt',import.meta.url),'utf8');const {ADB_SCRIPT}=await import('../src/android.ts');
+ const calls:unknown[][]=[];const monitor=createMonitor({hosts:[{name:'s22',adb:{serial:'EXAMPLE123'}},{name:'phone',adb:{serial:'EXAMPLE456',bin:'/usr/bin/adb'}}]},{run:async(file,args,options)=>{calls.push([file,args,options.timeout]);return {stdout:adbOutput};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
+  assert.deepEqual(calls,[['adb',['-s','EXAMPLE123','shell',ADB_SCRIPT],30000],['/usr/bin/adb',['-s','EXAMPLE456','shell',ADB_SCRIPT],30000]]);
+  assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status,h.snapshot.host,h.snapshot.android.battery.level]),[['s22','online','s22',84],['phone','online','phone',84]]);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('a detached adb device shows offline and never raises an offline alert',async()=>{
+ let clock=Date.parse('2026-09-29T12:00:00Z');const posts:unknown[]=[];
+ const monitor=createMonitor({hosts:[{name:'s22',adb:{serial:'MISSING000'}}],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:1}},{now:()=>clock,run:async()=>{throw Object.assign(Error("adb: device 'MISSING000' not found"),{code:1});},fetch:async(url,init)=>{posts.push([url,init]);return {ok:true,status:200};},sleep:async()=>{}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{
+  for(let i=0;i<3;i++){await monitor.refresh();clock+=600000;}await monitor.idle();
+  const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
+  assert.equal(j.hosts[0].status,'offline');assert.equal(j.hosts[0].snapshot,null);assert.equal(JSON.stringify(j).includes('MISSING000'),false);
+  assert.deepEqual(posts,[]);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('adb host entries outside the allowlist never reach the runner',async()=>{
+ const bad=[{serial:'-e'},{serial:'X; reboot'},{serial:'X',bin:'adb -H evil'},{serial:'X',bin:'relative/adb'},{serial:''},'X'];
+ const calls:unknown[]=[];const monitor=createMonitor({hosts:[...bad.map((adb,i)=>({name:'bad'+i,adb})),{name:'both',adb:{serial:'X'},ssh:'c8',node:'/n',collector:'/c',config:'/h'}]},{run:async(...args)=>{calls.push(args);return {stdout:''};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
+  assert.ok(j.hosts.every((h:any)=>h.status==='offline'&&h.snapshot===null));assert.equal(calls.length,0);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});

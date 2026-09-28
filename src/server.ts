@@ -1,4 +1,5 @@
 import {projectSnapshot} from './schema.ts';
+import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
 import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,DEFAULT_ALERT_KINDS} from './alerts.ts';
 import type {AlertEvent,NotifierOptions,TrackerState} from './alerts.ts';
 import type {Snapshot} from './model.ts';
@@ -9,7 +10,9 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:number;encoding:'utf8'})=>Promise<{stdout:string}>;
-export interface HostEntry{name:string;ssh?:string;node:string;collector:string;config:string;importantServices?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown}
+// A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
+// server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown}
 export interface ServerConfig{hosts:HostEntry[];port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
 interface Host extends HostEntry{importantServices:string[];refreshSeconds:number;timeoutSeconds:number}
 interface HostState{name:string;importantServices:string[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
@@ -50,13 +53,25 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(stateFile){const data=JSON.stringify(tracker.snapshot());saving=saving.then(async()=>{await fs.writeFile(stateFile+'.tmp',data,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile);}).catch(()=>log('host-monitor: alert state not saved'));}
  }
  const inflight=new Map<string,Promise<void>>(),timers=new Map<string,NodeJS.Timeout>();let stopped=false;
- async function collectHost(h:Host):Promise<Snapshot> {
-  const args=h.ssh?['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh,h.node,h.collector,'--config',h.config]:[h.collector,'--config',h.config];
-  if(h.ssh && (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh) || [h.node,h.collector,h.config].some(x=>typeof x!=='string'||!/^[a-zA-Z0-9_./-]+$/.test(x))))throw new Error('invalid-remote-command');
+ async function execute(h:Host,file:string,args:string[]) {
   const timeout=Math.ceil(h.timeoutSeconds*1000);let timer:NodeJS.Timeout|undefined;
   // The race bounds a runner that ignores its own timeout, so one hung host can only hold its own schedule.
-  const output=await Promise.race([run(h.ssh?'ssh':h.node,args,{timeout,maxBuffer:8*1024*1024,encoding:'utf8'}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('collector-timeout')),timeout);})]).finally(()=>clearTimeout(timer));
-  const snapshot=projectSnapshot(JSON.parse(output.stdout));if(snapshot.schemaVersion!==1||snapshot.host!==h.name||!Array.isArray(snapshot.services)||!Array.isArray(snapshot.attention)||!Number.isFinite(Date.parse(snapshot.collectedAt)))throw new Error('invalid-snapshot');
+  return (await Promise.race([run(file,args,{timeout,maxBuffer:8*1024*1024,encoding:'utf8'}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('collector-timeout')),timeout);})]).finally(()=>clearTimeout(timer))).stdout;
+ }
+ async function collectHost(h:Host):Promise<Snapshot> {
+  let snapshot:Snapshot;
+  if(h.adb!==undefined){
+   const adb=h.adb as {serial?:unknown;bin?:unknown}|null;
+   if(h.ssh!==undefined||!adb||typeof adb!=='object'||!adbSerial(adb.serial)||adb.bin!==undefined&&!adbBinary(adb.bin))throw new Error('invalid-adb-command');
+   snapshot=projectSnapshot(androidSnapshot(h.name,await execute(h,(adb.bin as string|undefined)??'adb',['-s',adb.serial,'shell',ADB_SCRIPT]),now()));
+  }else{
+   const {node,collector,config}=h;
+   // Remote arguments cross an ssh command line, so they are allowlisted; local paths only need to be present.
+   if(h.ssh!==undefined?!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh)||[node,collector,config].some(x=>typeof x!=='string'||!/^[a-zA-Z0-9_./-]+$/.test(x)):[node,collector,config].some(x=>typeof x!=='string'))throw new Error('invalid-remote-command');
+   const args=h.ssh?['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh,node!,collector!,'--config',config!]:[collector!,'--config',config!];
+   snapshot=projectSnapshot(JSON.parse(await execute(h,h.ssh?'ssh':node!,args)));
+  }
+  if(snapshot.schemaVersion!==1||snapshot.host!==h.name||!Array.isArray(snapshot.services)||!Array.isArray(snapshot.attention)||!Number.isFinite(Date.parse(snapshot.collectedAt)))throw new Error('invalid-snapshot');
   return snapshot;
  }
  function refreshHost(name:string):Promise<void> {
@@ -64,7 +79,9 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   const pending=inflight.get(name);if(pending)return pending;
   const attempt=(async()=>{await ready;const old=state.get(name)!,at=new Date(now()).toISOString();
    try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now()));}
-   catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});record(tracker.offline(name,now()));}
+   catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
+    // A detached adb device is an expected state, like a sleeping laptop: it shows offline but never raises an offline alert.
+    if(h.adb===undefined)record(tracker.offline(name,now()));}
    notifier?.tick(now());
   })().finally(()=>inflight.delete(name));
   inflight.set(name,attempt);return attempt;
