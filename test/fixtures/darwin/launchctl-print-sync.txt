@@ -1,0 +1,23 @@
+gui/501/com.example.sync = {
+	active count = 0
+	path = /Users/example/Library/LaunchAgents/com.example.sync.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /Users/example/.local/bin/sync-job
+	arguments = {
+		/Users/example/.local/bin/sync-job
+		--private-canary-flag
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 49
+	last exit code = 0
+
+	spawn type = daemon (3)
+	run interval = 21600 seconds
+	properties = inferred program
+}

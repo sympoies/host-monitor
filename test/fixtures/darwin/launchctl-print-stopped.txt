@@ -1,0 +1,17 @@
+gui/501/com.example.stopped = {
+	active count = 0
+	path = /Users/example/Library/LaunchAgents/com.example.stopped.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /Applications/Example.app/Contents/MacOS/Example
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last terminating signal = Terminated: 15
+
+	spawn type = interactive (4)
+	properties = runatload | inferred program | managed LWCR | has LWCR
+}

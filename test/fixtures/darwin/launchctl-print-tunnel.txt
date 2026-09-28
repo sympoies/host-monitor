@@ -1,0 +1,44 @@
+gui/501/com.example.tunnel = {
+	active count = 1
+	path = /Users/example/Library/LaunchAgents/com.example.tunnel.plist
+	type = LaunchAgent
+	state = running
+
+	program = /usr/bin/ssh
+	arguments = {
+		/usr/bin/ssh
+		-N
+		-L
+		127.0.0.1:19119:127.0.0.1:9119
+		private-canary-host
+	}
+
+	stdout path = /Users/example/Library/Logs/tunnel.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/private-canary/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		API_TOKEN => private-canary-token
+		XPC_SERVICE_NAME => com.example.tunnel
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 509
+	pid = 72425
+	immediate reason = inefficient
+	forks = 0
+	execs = 1
+	last exit code = 255
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	properties = keepalive | runatload | inferred program | managed LWCR | has LWCR
+}

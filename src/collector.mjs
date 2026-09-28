@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {pathToFileURL} from 'node:url';
-import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFor,parseContainers,parseGpus,loopbackProbeUrl} from './model.mjs';
+import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFor,parseContainers,parseGpus,loopbackProbeUrl,parseLaunchdServices,parseLaunchdJob,classifyLaunchdJob,hostIdentityMatches,logTimestamp,launchdLabel,processName} from './model.mjs';
 const exec=promisify(execFile);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function command(bin,args) {return (await exec(bin,args,{timeout:10000,maxBuffer:8*1024*1024,encoding:'utf8',env:{...process.env,LC_ALL:'C'}})).stdout;}
@@ -32,6 +32,45 @@ export async function journal(scope,run=command) {
  const text=await run('journalctl',[...prefix,'--since=-1h','--priority=err','--no-pager','--output=json','--output-fields=_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,__REALTIME_TIMESTAMP,PRIORITY','-n','2000']);
  const groups=new Map();for(const line of text.trim().split('\n').filter(Boolean)){const row=JSON.parse(line);const unit=row._SYSTEMD_USER_UNIT||row._SYSTEMD_UNIT||'system';if(typeof unit!=='string')continue;const key=scope+':'+unit;const item=groups.get(key)||{unit,scope,count:0,lastAt:null};item.count++;const time=Number(row.__REALTIME_TIMESTAMP)/1000;if(Number.isFinite(time))item.lastAt=new Date(time).toISOString();groups.set(key,item);}return [...groups.values()];
 }
+// Streams stdout line by line so a large log never has to fit in memory; a timeout or line cap fails the part.
+export function streamLines(bin,args,onLine,{timeout=20000,maxLines=500000}={}) {
+ return new Promise((resolve,reject)=>{
+  const child=spawn(bin,args,{stdio:['ignore','pipe','ignore'],env:{...process.env,LC_ALL:'C'}});let rest='',lines=0,done=false;
+  const finish=error=>{if(done)return;done=true;clearTimeout(timer);if(error){child.kill('SIGKILL');reject(error);}else resolve();};
+  const timer=setTimeout(()=>finish(new Error('command-timeout')),timeout);
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data',chunk=>{if(done)return;rest+=chunk;let i;while(!done&&(i=rest.indexOf('\n'))>=0){const line=rest.slice(0,i);rest=rest.slice(i+1);if(++lines>maxLines)return finish(new Error('command-output-limit'));onLine(line);}if(rest.length>1048576)finish(new Error('command-output-limit'));});
+  child.on('error',finish);child.on('close',code=>{if(!done&&rest)onLine(rest);finish(code===0?undefined:new Error('command-failed'));});
+ });
+}
+// macOS: user agents live in the gui/<uid> domain (user/<uid> without a login session), daemons in the system domain.
+// Both are readable without privileges. Detail is read only for required labels; the domain list covers the rest.
+export async function collectLaunchd(scope,required=[],{uid=process.getuid?.(),run=command}={}) {
+ if(scope==='user'&&!Number.isInteger(uid))throw new Error('uid-unavailable');
+ let domain=scope==='user'?'gui/'+uid:'system',text;
+ try{text=await run('launchctl',['print',domain]);}catch(error){if(scope!=='user')throw error;domain='user/'+uid;text=await run('launchctl',['print',domain]);}
+ const inventory=new Map(parseLaunchdServices(text).map(r=>[r.label,r]));
+ const wanted=required.filter(launchdLabel);
+ const details=new Map(await Promise.all(wanted.map(async label=>{try{return [label,parseLaunchdJob(await run('launchctl',['print',domain+'/'+label]))];}catch{return [label,null];}})));
+ const services=[...new Set([...inventory.keys(),...wanted])].map(name=>{
+  const r=inventory.get(name),d=details.get(name),isRequired=wanted.includes(name);
+  const job=d?{...d,installed:'loaded'}:r?{type:scope==='user'?'LaunchAgent':'LaunchDaemon',state:r.pid>0?'running':'not running',exitCode:r.status!==null&&r.status>=0?r.status:null,signal:r.status!==null&&r.status<0?-r.status:null,periodic:false,installed:'loaded'}:{type:'',state:'not loaded',exitCode:null,signal:null,periodic:false,installed:'missing'};
+  const result=job.state==='running'?'':job.signal!=null?'signal':job.exitCode===0?'success':job.exitCode!=null?'exit-code':'';
+  return {name,scope,manager:'launchd',description:name,installed:job.installed,active:job.state==='running'?'active':job.state==='spawn scheduled'?'activating':'inactive',sub:job.state,type:job.type,result,exitCode:job.exitCode,memoryBytes:null,lastExit:null,lastStarted:null,triggers:job.periodic?'interval':'',required:isRequired,health:classifyLaunchdJob(job,isRequired)};
+ });
+ return {services,logTargets:wanted.filter(label=>details.get(label)?.process).map(label=>({label,scope,process:details.get(label).process}))};
+}
+// Error counts for required jobs, attributed by process name (and uid for user agents). Message text is never read out.
+export async function launchdLogErrors(targets,{uid=process.getuid?.(),stream=streamLines}={}) {
+ const valid=targets.filter(t=>launchdLabel(t.label)&&processName(t.process));if(!valid.length)return [];
+ const names=[...new Set(valid.map(t=>t.process))],byProcess=new Map(names.map(n=>[n,valid.filter(t=>t.process===n)]));
+ const counts=new Map(valid.map(t=>[t,{unit:t.label,scope:t.scope,process:t.process,count:0,lastAt:null}]));
+ await stream('/usr/bin/log',['show','--last','1h','--style','ndjson','--predicate',`messageType == error AND (${names.map(n=>`process == "${n}"`).join(' OR ')})`],line=>{
+  let row;try{row=JSON.parse(line);}catch{return;}if(typeof row?.processImagePath!=='string')return;
+  for(const t of byProcess.get(row.processImagePath.split('/').pop())??[]){if(t.scope==='user'&&row.userID!==uid)continue;const item=counts.get(t);item.count++;const at=logTimestamp(row.timestamp);if(at&&(!item.lastAt||at>item.lastAt))item.lastAt=at;}
+ });
+ return [...counts.values()].filter(item=>item.count>0);
+}
 async function containers() {
  const text=await command('docker',['ps','-a','--format','{"name":{{json .Names}},"image":{{json .Image}},"state":{{json .State}},"status":{{json .Status}}}']);
  return parseContainers(text);
@@ -40,11 +79,19 @@ async function gpu() {
  const text=await command('nvidia-smi',['--query-gpu=name,utilization.gpu,memory.total,memory.used,temperature.gpu','--format=csv,noheader,nounits']);
  return parseGpus(text);
 }
-export async function collect(config) {
- if(config.name!==os.hostname())throw new Error('host-identity-mismatch');
- const result={schemaVersion:1,host:config.name,collectedAt:new Date().toISOString(),hardware:{cpuCount:os.cpus().length,cpuModel:os.cpus()[0]?.model,load:os.loadavg(),uptime:os.uptime(),kernel:os.release()},collectionIssues:[],services:[],failedUnits:[],containers:[],journalErrors:[],probes:[]};
+export async function collect(config,{platform=process.platform,hostname=os.hostname(),uid=process.getuid?.(),run=command,stream=streamLines}={}) {
+ if(!hostIdentityMatches(hostname,config))throw new Error('host-identity-mismatch');
+ const darwin=platform==='darwin';
+ // Resource metrics on macOS come from Beszel by design, so they are marked external rather than reported as failures.
+ const result={schemaVersion:1,host:config.name,platform,resources:darwin?'external':'collected',collectedAt:new Date().toISOString(),hardware:{cpuCount:os.cpus().length,cpuModel:os.cpus()[0]?.model,load:os.loadavg(),uptime:os.uptime(),kernel:os.release()},collectionIssues:[],services:[],failedUnits:[],containers:[],journalErrors:[],probes:[]};
  async function part(name,fn,apply){try{apply(await fn());}catch{result.collectionIssues.push(name+' unavailable');}}
- await Promise.all([
+ const probes=()=>(config.probes??[]).map(async probe=>{const u=loopbackProbeUrl(probe.url);try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}});
+ await Promise.all(darwin?[
+  (async()=>{const byScope={};await Promise.all(['user','system'].map(scope=>part(scope+' services',()=>collectLaunchd(scope,config.required?.[scope]??[],{uid,run}),v=>{result.services.push(...v.services);byScope[scope]=v.logTargets;})));
+   await part('error log',()=>launchdLogErrors([...byScope.user??[],...byScope.system??[]],{uid,stream}),v=>result.journalErrors.push(...v));})(),
+  ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
+  ...probes(),
+ ]:[
   part('CPU',async()=>{const a=await cpu();await delay(1000);return cpuBusy(a,await cpu());},value=>result.hardware.cpuBusy=value),
   part('memory',async()=>parseMeminfo(await fs.readFile('/proc/meminfo','utf8')),value=>result.memory=value),
   part('disks',async()=>parseDisks(await command('df',['-B1','--exclude-type=fuse.portal','--output=source,fstype,size,used,avail,pcent,target'])),value=>result.disks=value),
@@ -55,7 +102,7 @@ export async function collect(config) {
   ]),
   ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
   ...(config.nvidia?[part('GPU',gpu,v=>result.gpus=v)]:[]),
-  ...((config.probes??[]).map(async probe=>{const u=loopbackProbeUrl(probe.url);try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}})),
+  ...probes(),
  ]);
  for(const name of config.requiredContainers??[]){const c=result.containers.find(c=>c.name===name);if(!c)result.containers.push({name,image:'Configured service',state:'missing',status:'Container missing',health:'unhealthy'});else if(c.state!=='running')c.health='unhealthy';}
  result.services.sort((a,b)=>a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name));result.attention=attentionFor(result);return result;

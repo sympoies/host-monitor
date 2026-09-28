@@ -1,0 +1,25 @@
+gui/501/com.example.broken = {
+	active count = 0
+	path = /Library/LaunchAgents/com.example.broken.plist
+	type = LaunchAgent
+	state = spawn scheduled
+
+	program = /Applications/Example Manager.app/Contents/MacOS/ExampleDaemon
+	arguments = {
+		/Applications/Example Manager.app/Contents/MacOS/ExampleDaemon
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	nice = 0
+	runs = 1
+	last exit code = 78: EX_CONFIG
+
+	event triggers = {
+	}
+
+	spawn type = daemon (3)
+	properties = keepalive | runatload | penalty box | inferred program | untrusted | managed LWCR
+}
