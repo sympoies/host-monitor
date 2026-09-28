@@ -1,0 +1,24 @@
+# Repo-local project-dev document and completion contracts. AGENTS.md is
+# canonical; detailed documents stay on-demand.
+
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "DEVELOPMENT.md"
+required = true
+when = "always"
+notes = "Collector, server, configuration, acceptance, and release contracts."
+
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "docs/devlog/README.md"
+required = false
+when = "always"
+notes = "Development log conventions and month index; read before a release or when appending history. The devlog replaces a changelog."
+
+[[validation]]
+context = "project-dev"
+commands = ["npm run validate"]
+marker = ".cache/agent-validation/project-dev.ok"
+description = "Run the repository-owned source validation: syntax checks and all deterministic tests."

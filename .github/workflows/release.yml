@@ -40,6 +40,8 @@ jobs:
           {
             echo "Artifact id: \`$ARTIFACT\`"
             echo
+            echo "Changes: see the release entry in [docs/devlog]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_REF_NAME/docs/devlog)."
+            echo
             echo "Install by downloading \`$TARBALL\`, \`verify-artifact.mjs\`, \`install-release.sh\`, \`artifact-id\` and \`SHA256SUMS\`, then running \`sha256sum --check --strict SHA256SUMS\`, extracting the tarball, verifying it with \`node verify-artifact.mjs <dir> $ARTIFACT\`, and installing with \`install-release.sh\`. See DEVELOPMENT.md."
             echo
             echo '```'
