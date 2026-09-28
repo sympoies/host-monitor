@@ -26,6 +26,12 @@ Android devices (fleet-infra decision 0003) run no collector. The server collect
 
 The server configuration lists `hosts` (`name`, and either local `node`/`collector`/`config` paths, an `ssh` alias with remote paths, or `adb`: `{"serial": "<adb serial>"}` with an optional absolute `bin` for the adb binary, which defaults to `adb` on `PATH`), an optional `port` and `refreshSeconds`, and optional `importantServices`: service-name substrings that the dashboard's default "important services" filter shows in addition to required, failed, and container entries. Set it server-wide or per host; a host entry's list replaces the server-wide one.
 
+### On-demand service logs
+
+A locally collected Linux host may set `logUnits` to exact `{ "scope": "user" | "system", "name": "example.service" }` entries. Names must be unique even across scopes. SSH, macOS, and Android hosts cannot enable the log route. The browser shows **查看日誌** only beside a configured unit in a fresh, online snapshot. `GET /api/logs?host=<configured host>&unit=<configured name>` calls `journalctl` with fixed arguments for the most recent 120 lines, a five-second timeout, and a 256 KiB output cap. At most two tails run concurrently; excess requests receive 429. Unknown units are rejected before any command; an offline or stale host cannot serve a retained tail. The route accepts no browser command, path, line count, or scope selection.
+
+The raw message text is held only for that response and the visible panel. It never enters `/api/fleet`, `/api/events`, the collector, history files, alerts, or error logs; the browser renders it as text. The server has no application login: the infrastructure owner must limit Tailnet access to the monitor port to everyone permitted to read these journal tails. Tailnet membership alone is not an authorization policy. Do not enable `logUnits` for a unit whose journal may reveal credentials or provider transcripts.
+
 ### Scheduling, history, and alerts
 
 Each host runs its own collection loop. A host entry may set `refreshSeconds` (default: the server-wide `refreshSeconds`, which defaults to 20) and `timeoutSeconds` (default 30). The next collection for a host starts `refreshSeconds` after its previous attempt settles. An attempt that exceeds `timeoutSeconds` marks only that host offline, so a hung host never delays the others. A snapshot is stale once it is older than three refresh intervals of its host.

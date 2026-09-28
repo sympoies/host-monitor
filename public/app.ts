@@ -5,11 +5,11 @@ interface Container{name:string;image?:string;state?:string;status?:string;healt
 interface Disk{source:string;type:string;total:number;used:number;available:number;percent:number;mount:string}
 interface Snapshot{platform?:string;resources?:string;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
-interface HostView{name:string;status:string;stale:boolean;importantServices?:string[];snapshot:Snapshot|null;lastSuccess:string|null}
+interface HostView{name:string;status:string;stale:boolean;importantServices?:string[];logUnits?:{name:string;scope:string}[];snapshot:Snapshot|null;lastSuccess:string|null}
 interface Fleet{serverTime:string;refreshSeconds:number;hosts:HostView[]}
 interface HostEvent{at:string;host:string;type:string;kind:string;title:string;severity:string;detail?:string}
-interface Row{name:string;description?:string;health:string;source:string;details?:string;required?:boolean;active?:string;state?:string}
-let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false;
+interface Row{name:string;scope?:string;description?:string;health:string;source:string;details?:string;required?:boolean;active?:string;state?:string}
+let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false,logRequest=0,openedLog:{host:string;unit:string}|undefined;
 const $=(id:string)=>document.getElementById(id) as HTMLElement;
 const input=(id:string)=>$(id) as HTMLInputElement;
 const el=(tag:string,text?:string,className?:string)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;};
@@ -29,14 +29,33 @@ const thermalLabel=['正常','輕微','中等','嚴重','危急','緊急','關�
 const celsius=(n:number)=>n.toFixed(1)+'°C';
 function hostSummary(s:Snapshot){if(externalResources(s))return '資源指標：Beszel';if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;}
 function important(s:Row,markers:string[]=[]){return s.required||markers.some(m=>s.name.includes(m))||s.health==='error';}
+function closeLog(){logRequest++;openedLog=undefined;$('log-panel').hidden=true;$('log-body').textContent='';}
+async function openLog(host:string,unit:string){
+ const request=++logRequest;openedLog={host,unit};$('log-panel').hidden=false;$('log-title').textContent=unit;
+ ($('log-refresh') as HTMLButtonElement).disabled=true;
+ $('log-body').textContent='讀取最近 120 行日誌中…';
+ $('log-panel').scrollIntoView({block:'nearest'});
+ try{const params=new URLSearchParams({host,unit}),response=await fetch('/api/logs?'+params,{cache:'no-store'});
+  if(!response.ok)throw Error();const data=await response.json() as {text:string};
+  if(request===logRequest)$('log-body').textContent=data.text||'目前沒有日誌';
+ }catch{if(request===logRequest)$('log-body').textContent='日誌目前無法讀取，請稍後重試。';}
+ finally{if(request===logRequest)($('log-refresh') as HTMLButtonElement).disabled=false;}
+}
 function rows(){if(!fleet)return;const host=fleet.hosts.find(h=>h.name===selected),s=host?.snapshot;if(!s)return;const query=input('search').value.trim().toLowerCase(),filter=input('filter').value;
  const units:Row[]=s.services.map(u=>({...u,source:u.manager==='termux'?'Termux':u.manager==='android'?'Android app':u.manager==='launchd'?(u.scope==='user'?'launchd agent':'launchd daemon'):u.scope==='user'?'使用者 service':'系統 service',details:[u.installed,u.type,u.active,u.sub,u.result&&u.result!=='success'?u.result:''].filter(Boolean).join(' · ')}));
  for(const c of s.containers??[])units.push({...c,source:'Docker',description:c.image,health:c.health==='unhealthy'||['restarting','dead'].includes(c.state??'')?'error':c.state==='running'?(c.health==='healthy'?'ok':'unknown'):'inactive',details:c.status,required:true});
  const list=units.filter(u=>(!query||(u.name+' '+(u.description??'')).toLowerCase().includes(query))&&(filter==='all'||filter==='important'&&important(u,host?.importantServices)||filter==='attention'&&u.health==='error'||filter==='running'&&(u.active==='active'||u.state==='running'))).sort((a,b)=>(a.health==='error'?-1:0)-(b.health==='error'?-1:0)||a.name.localeCompare(b.name));
- const tbody=$('services');tbody.replaceChildren();for(const u of list){const tr=el('tr'),name=el('td',u.name);name.append(el('small',u.description));const state=el('td');state.append(pill(healthLabel[u.health]||'無法確認',u.health));if(u.health==='unknown'&&u.state==='running')state.append(el('small','執行中 · 未設定健康檢查'));tr.append(name,state,el('td',u.source),el('td',u.details));tbody.append(tr);}$('empty').hidden=list.length>0;$('service-count').textContent=`已安裝 ${s.services.length} 個 service · ${s.containers?.length??0} 個容器 · 顯示 ${list.length} 項`;
+ const tbody=$('services');tbody.replaceChildren();for(const u of list){const tr=el('tr'),name=el('td',u.name);name.append(el('small',u.description));
+  if(host?.status==='online'&&!host.stale&&s.platform==='linux'&&host.logUnits?.some(v=>v.name===u.name&&v.scope===u.scope)){
+   const button=el('button','查看日誌','log-link');button.setAttribute('type','button');button.setAttribute('aria-label',`查看 ${u.name} 日誌`);
+   button.addEventListener('click',()=>void openLog(host.name,u.name));name.append(button);
+  }
+  const state=el('td');state.append(pill(healthLabel[u.health]||'無法確認',u.health));if(u.health==='unknown'&&u.state==='running')state.append(el('small','執行中 · 未設定健康檢查'));tr.append(name,state,el('td',u.source),el('td',u.details));tbody.append(tr);}$('empty').hidden=list.length>0;$('service-count').textContent=`已安裝 ${s.services.length} 個 service · ${s.containers?.length??0} 個容器 · 顯示 ${list.length} 項`;
 }
-function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;$('hosts').replaceChildren();for(const h of fleet.hosts){const button=el('button',undefined,'host '+(h.name===selected?'selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');const good=h.status==='online'&&!h.stale;top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok'));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.addEventListener('click',()=>{selected=h.name;location.hash=selected;render();});$('hosts').append(button);}
- const h=fleet.hosts.find(h=>h.name===selected);if(!h)return;const s=h.snapshot;$('host-title').textContent=h.name;$('connection').textContent=h.status!=='online'||h.stale?'無法取得即時資料。'+(s?'下方保留最後一次成功的快照，請留意更新時間。':'正在等待 collector 回應。'):'';$('updated').textContent=`網頁更新 ${time(fleet.serverTime)} · 每 ${fleet.refreshSeconds} 秒採集`;
+function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;$('hosts').replaceChildren();for(const h of fleet.hosts){const button=el('button',undefined,'host '+(h.name===selected?'selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');const good=h.status==='online'&&!h.stale;top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok'));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.addEventListener('click',()=>{closeLog();selected=h.name;location.hash=selected;render();});$('hosts').append(button);}
+ const h=fleet.hosts.find(h=>h.name===selected);if(!h)return;const s=h.snapshot;
+ if(openedLog&&(openedLog.host!==h.name||h.status!=='online'||h.stale))closeLog();
+ $('host-title').textContent=h.name;$('connection').textContent=h.status!=='online'||h.stale?'無法取得即時資料。'+(s?'下方保留最後一次成功的快照，請留意更新時間。':'正在等待 collector 回應。'):'';$('updated').textContent=`網頁更新 ${time(fleet.serverTime)} · 每 ${fleet.refreshSeconds} 秒採集`;
  const sum=$('summary');sum.textContent=s?`${s.attention.length} 項需要關注`:'等待資料';sum.className='pill '+(!s?'warning':s.attention.some(a=>a.severity==='error')?'error':s.attention.length?'warning':'ok');$('attention').replaceChildren();$('resources').replaceChildren();$('disks').replaceChildren();$('checks').replaceChildren();$('services').replaceChildren();renderEvents(h.name);if(!s)return;
  for(const a of s.attention){const notice=el('div',a.title,'notice '+a.severity);if(a.detail)notice.append(el('span',a.detail));$('attention').append(notice);}if(!s.attention.length)$('attention').append(el('div',h.status==='online'&&!h.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(h.status==='online'&&!h.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
@@ -60,4 +79,6 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
 const eventLabel:Record<string,string>={attention:'需要關注',recovered:'已恢復',offline:'無法連線',online:'恢復連線'};
 function renderEvents(host:string){const list=events.filter(e=>e.host===host).slice(0,20);$('events').replaceChildren();for(const e of list){const div=el('div',e.title,'check');div.append(pill(eventLabel[e.type]||e.type,e.type==='attention'?(e.severity==='error'?'error':'warning'):e.type==='offline'?'error':'ok'),el('small',`${e.kind} · ${new Date(e.at).toLocaleString('zh-TW',{hour12:false})}${e.detail?' · '+e.detail:''}`));$('events').append(div);}if(!list.length)$('events').append(el('div','目前沒有紀錄到狀態轉換','check'));}
 async function refresh(){if(fetching)return;fetching=true;try{const r=await fetch('/api/fleet',{cache:'no-store'});if(!r.ok)throw Error();fleet=await r.json();try{const e=await fetch('/api/events?limit=200',{cache:'no-store'});if(e.ok)events=(await e.json()).events;}catch{}render();}catch{$('connection').textContent='監控 server 暫時無法連線；目前頁面資料可能已過期。';}finally{fetching=false;}}
-$('refresh').addEventListener('click',refresh);$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);void refresh();setInterval(refresh,5000);
+$('refresh').addEventListener('click',refresh);$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);
+$('log-close').addEventListener('click',closeLog);$('log-refresh').addEventListener('click',()=>{if(openedLog)void openLog(openedLog.host,openedLog.unit);});
+void refresh();setInterval(refresh,5000);
