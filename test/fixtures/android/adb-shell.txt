@@ -1,0 +1,169 @@
+@@battery
+Current Battery Service state:
+  AC powered: false
+  USB powered: true
+  Wireless powered: false
+  Dock powered: false
+  Max charging current: 0
+ Time when the latest updated value of the Max charging current was sent via battery changed broadcast: 0
+  Max charging voltage: 0
+  Charge counter: 0
+  status: 4
+  health: 2
+  present: true
+  level: 84
+  scale: 100
+  voltage: 4113
+ Time when the latest updated value of the voltage was sent via battery changed broadcast: 0
+ The last voltage value sent via the battery changed broadcast: 4113
+  temperature: 319
+  technology: Li-ion
+  Charging state: 0
+  Charging policy: 0
+  Capacity level: -1
+  batteryMiscEvent: 16908288
+  batteryCurrentEvent: 537952256
+  mSecPlugTypeSummary: 2
+  LED Charging: true
+  LED Low Battery: true
+  current now: 15
+  charge counter: 0
+  Adaptive Fast Charging Settings: false
+  Super Fast Charging Settings: true
+FEATURE_WIRELESS_FAST_CHARGER_CONTROL: true
+  mWasUsedWirelessFastChargerPreviously: false
+  mWirelessFastChargingSettingsEnable: true
+LLB CAL: 20000101
+LLB MAN: 
+LLB CURRENT: YEAR2000M1D1
+LLB DIFF: 0
+SEC_FEATURE_BATTERY_FULL_CAPACITY: true
+  mFullCapacityEnable: false
+FEATURE_HICCUP_CONTROL: true
+FEATURE_SUPPORTED_DAILY_BOARD: false
+SEC_FEATURE_BATTERY_LIFE_EXTENDER: false
+SEC_FEATURE_USE_WIRELESS_POWER_SHARING: true
+ mProtectBatteryMode: 1
+ mProtectionThreshold: 80
+ mMaximumProtectionThreshold: 85
+ mLtcHighThreshold: 95
+ mLtcHighSocDuration: 10080
+ mLtcReleaseThreshold: 75
+[Not Battery Adaptive Protect Mode]
+  FEATURE_SAVE_BATTERY_CYCLE: true
+  FEATURE_FULL_BATTERY_CYCLE: false
+  battery IcAuthenticationResults: [false]
+  battery FirstUseDate: [20000101]
+  mSavedBatteryAsoc: [85]
+  mSavedBatteryUsage: [0]
+  mSavedFullStatusDuration: unsupported
+
+@@protect
+1
+@@thermal
+IsStatusOverride: false
+ThermalEventListeners:
+	callbacks: 3
+	killed: false
+	broadcasts count: -1
+ThermalStatusListeners:
+	callbacks: 6
+	killed: false
+	broadcasts count: -1
+Thermal Status: 0
+Cached temperatures:
+	Temperature{mValue=0.0, mType=2, mName=SUBBAT, mStatus=0}
+	Temperature{mValue=0.0, mType=2, mName=SUBBATRAW, mStatus=0}
+	Temperature{mValue=32.3, mType=0, mName=AP, mStatus=0}
+	Temperature{mValue=31.9, mType=2, mName=BAT, mStatus=0}
+	Temperature{mValue=31.3, mType=4, mName=USB, mStatus=0}
+	Temperature{mValue=32.2, mType=3, mName=SKIN, mStatus=0}
+	Temperature{mValue=34.3, mType=5, mName=PATHM, mStatus=0}
+HAL Ready: true
+HAL connection:
+	ThermalHAL 2.0 connected: yes
+Current temperatures from HAL:
+	Temperature{mValue=32.3, mType=0, mName=AP, mStatus=0}
+	Temperature{mValue=31.9, mType=2, mName=BAT, mStatus=0}
+	Temperature{mValue=34.3, mType=5, mName=PATHM, mStatus=0}
+	Temperature{mValue=32.2, mType=3, mName=SKIN, mStatus=0}
+	Temperature{mValue=0.0, mType=2, mName=SUBBAT, mStatus=0}
+	Temperature{mValue=0.0, mType=2, mName=SUBBATRAW, mStatus=0}
+	Temperature{mValue=31.3, mType=4, mName=USB, mStatus=0}
+Current cooling devices from HAL:
+Temperature static thresholds from HAL:
+Temperature headroom thresholds:
+[NaN, 0.8666667, 0.93333334, 1.0, 1.1333333, 1.4333333, 2.4333334]
+@@meminfo
+MemTotal:        7394216 kB
+MemFree:          174816 kB
+MemAvailable:    2792284 kB
+Buffers:            1596 kB
+Cached:          2801940 kB
+SwapCached:       348452 kB
+Active:          1337312 kB
+Inactive:        2119344 kB
+Active(anon):     492944 kB
+Inactive(anon):  1009432 kB
+Active(file):     844368 kB
+Inactive(file):  1109912 kB
+Unevictable:        6776 kB
+Mlocked:            4524 kB
+RbinTotal:        819200 kB
+RbinAlloced:        7168 kB
+RbinPool:              0 kB
+RbinFree:              0 kB
+RbinCached:       812032 kB
+ZeroedFree:            0 kB
+SwapTotal:       8388604 kB
+SwapFree:        5350480 kB
+Dirty:               240 kB
+Writeback:             0 kB
+AnonPages:       1301412 kB
+Mapped:           997224 kB
+Shmem:             42192 kB
+KReclaimable:     238320 kB
+Slab:             576976 kB
+SReclaimable:     142156 kB
+SUnreclaim:       434820 kB
+KernelStack:       93472 kB
+ShadowCallStack:   23408 kB
+PageTables:       190424 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:    11676112 kB
+Committed_AS:   318764116 kB
+VmallocTotal:   263061440 kB
+VmallocUsed:      317920 kB
+VmallocChunk:          0 kB
+Percpu:            12064 kB
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:         0 kB
+FilePmdMapped:         0 kB
+HugepagePool:          0 kB
+CmaTotal:         487424 kB
+CmaFree:           16352 kB
+dma_heap_pool:      1276 kB
+system:           185396 kB
+kgsl_pool:         94888 kB
+KgslSharedmem:    254800 kB
+zram0:            878332 kB
+@@df
+Filesystem       1K-blocks     Used Available Use% Mounted on
+/dev/block/dm-58 110120908 10737896  99251940  10% /storage/emulated/0/Android/obb
+@@uptime
+266313.40 1513046.44
+2.49 2.33 2.44 2/5835 27152
+6
+5.10.236-android12-9-31998796-abS9010ZHSBGZH3
+@@ps
+u0_a321      com.tailscale.ipn
+u0_a328      com.termux
+u0_a328      sshd
+@@props
+SM-S9010
+16
+@@end

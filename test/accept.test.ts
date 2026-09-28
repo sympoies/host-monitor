@@ -25,3 +25,8 @@ test('the browser acceptance takes its resource assertions from the expectation'
  assert.ok(script.includes("from './accept-expectations.ts'"));
  assert.ok(!script.includes("count(),4)"),'no hard-coded four-metric assertion');
 });
+test('an Android device collects its own resources: four metrics (battery, temperature, memory, /data) and disk rows',()=>{
+ assert.deepEqual(resourceExpectation(snapshot('phone-a')),{resources:'collected',metrics:4,diskRows:true});
+ const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
+ for(const label of ['電池電量','電池溫度','記憶體使用率','/data 儲存空間'])assert.ok(app.includes(`metric('${label}'`),label);
+});

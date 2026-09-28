@@ -8,6 +8,7 @@ const boolean=(v:unknown)=>typeof v==='boolean'?v:undefined;
 function object<S extends Shape>(value:unknown,shape:S):Projected<S>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('invalid-snapshot-object');const source=value as Record<string,unknown>,out:Record<string,unknown>={};for(const [key,convert]of Object.entries(shape)){const v=convert(source[key]);if(v!==undefined)out[key]=v;}return out as Projected<S>;}
 const list=<T>(convert:Convert<T>,max=5000)=>(value:unknown):T[]=>{if(value===undefined)return [];if(!Array.isArray(value)||value.length>max)throw Error('invalid-snapshot-array');return value.map(convert);};
 const record=<S extends Shape>(shape:S)=>(value:unknown)=>object(value,shape);
+const optional=<S extends Shape>(shape:S)=>(value:unknown)=>value===undefined?undefined:object(value,shape);
 const str=(value:unknown)=>text(value);
 const name=(value:unknown)=>text(value,256);
 const numericList=list(number,16);
@@ -25,6 +26,8 @@ export function projectSnapshot(value:unknown):Snapshot{
   journalErrors:list(record({unit:name,scope:name,process:name,count:number,lastAt:name}),2000),
   collectionIssues:list(str,64),probes:list(record({name,ok:boolean,status:number}),100),
   gpus:list(record({name:str,busy:number,memoryTotal:number,memoryUsed:number,temperature:number}),32),
+  android:optional({model:name,release:name,battery:optional({level:number,health:name,temperature:number,status:name,power:name}),protection:(value:unknown)=>value===null||typeof value==='boolean'?value:undefined,
+   thermal:optional({status:number,sensors:list(record({name,temperature:number}),16)})}),
   attention:list(record({severity:name,kind:name,title:str,detail:str}),10000),
  });
  if(snapshot.schemaVersion!==1||!snapshot.host||!Number.isFinite(Date.parse(snapshot.collectedAt??''))||!snapshot.hardware?.cpuCount||!Array.isArray(snapshot.hardware.load))throw Error('invalid-snapshot-header');

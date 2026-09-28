@@ -1,6 +1,6 @@
 # Host Monitor
 
-A central, read-only web dashboard for installed system/user services on Linux (systemd) and macOS (launchd), container state, functional probes, recent error counts, and Linux host resources. Generic resource metrics and their history for the fleet come from Beszel (fleet-infra decision 0002); on macOS the dashboard points there instead of collecting them.
+A central, read-only web dashboard for installed system/user services on Linux (systemd) and macOS (launchd), container state, functional probes, recent error counts, Linux host resources, and the battery, thermal, and storage state of Android devices attached to the server over USB adb. Generic resource metrics and their history for the fleet come from Beszel (fleet-infra decision 0002); on macOS the dashboard points there instead of collecting them.
 
 Each host owns its collector configuration through its infrastructure repository. The portable collector emits a versioned JSON snapshot over an existing SSH connection; the server schedules collection and serves the UI on loopback. Tailnet exposure belongs to infrastructure. There are no third-party runtime dependencies, browser shell actions, raw journals, environment dumps, or provider data.
 
