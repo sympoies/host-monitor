@@ -1,10 +1,11 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import {once} from 'node:events';
-import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,inQuietHours} from '../src/alerts.mjs';
-import {createMonitor} from '../src/server.mjs';
+import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,inQuietHours} from '../src/alerts.ts';
+import {createMonitor} from '../src/server.ts';import type {Attention} from '../src/model.ts';import type net from 'node:net';
+const port=(s:net.Server)=>(s.address() as net.AddressInfo).port;
 const T0=Date.parse('2026-09-28T04:00:00Z');
 const stopped={severity:'error',kind:'service',title:'web.service',detail:'user · inactive · success'};
 const tmp=()=>fs.mkdtemp(path.join(os.tmpdir(),'host-monitor-alerts-'));
-function recorder({fail=0}={}){const calls=[];let failures=fail;const fetchImpl=async(url,init)=>{calls.push({url:String(url),init,body:JSON.parse(init.body)});if(failures-->0)throw Error('relay down');return new Response('ok');};return {calls,fetchImpl};}
+function recorder({fail=0}={}){const calls:{url:string;init:RequestInit&{headers:Record<string,string>};body:any}[]=[];let failures=fail;const fetchImpl=async(url:URL,init:RequestInit)=>{calls.push({url:String(url),init:init as RequestInit&{headers:Record<string,string>},body:JSON.parse(init.body as string)});if(failures-->0)throw Error('relay down');return new Response('ok');};return {calls,fetchImpl};}
 
 test('transitions are emitted once per new attention item, recovery and offline period',()=>{
  const t=createTracker({offlineAfterMs:300000});
@@ -38,8 +39,8 @@ test('notifications use the relay JSON shape, a fixed prefix and an auth header 
  assert.equal(plain.calls[0].init.headers.authorization,undefined);assert.equal(plain.calls[0].body.title,'[host-monitor] c8: collector unreachable');
 });
 test('delivery retries are bounded, queued and never awaited by the caller',async()=>{
- const flaky=recorder({fail:2});const sleeps=[];const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:flaky.fetchImpl,sleep:async ms=>{sleeps.push(ms);},retries:3});
- const event={at:new Date(T0).toISOString(),host:'c8',type:'attention',kind:'service',title:'web.service',severity:'error'};
+ const flaky=recorder({fail:2});const sleeps:number[]=[];const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:flaky.fetchImpl,sleep:async (ms:number)=>{sleeps.push(ms);},retries:3});
+ const event={at:new Date(T0).toISOString(),host:'c8',type:'attention' as const,kind:'service',title:'web.service',severity:'error'};
  assert.equal(n.submit([event],T0),undefined);await n.idle();assert.equal(flaky.calls.length,3);assert.equal(sleeps.length,2);assert.deepEqual(n.stats(),{sent:1,failed:0,dropped:0});
  const dead=recorder({fail:99});const d=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:dead.fetchImpl,sleep:async()=>{},retries:3,maxQueue:2});
  d.submit([event,{...event,title:'a'},{...event,title:'b'}],T0);await d.idle();assert.deepEqual(d.stats(),{sent:0,failed:2,dropped:1});assert.equal(dead.calls.length,6);
@@ -64,42 +65,42 @@ test('history is an append-only JSONL log capped by size and rotation that survi
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
 
-const host={name:'c8',ssh:'c8',node:'/usr/bin/node',collector:'/app/collector.mjs',config:'/app/host.json'};
-const snap=(at,attention=[])=>({schemaVersion:1,host:'c8',collectedAt:new Date(at).toISOString(),services:[],attention,hardware:{cpuCount:8,load:[0,0,0],uptime:10,kernel:'Linux'}});
-async function serve(monitor,fn){monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await fn('http://127.0.0.1:'+monitor.server.address().port);}finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}}
+const host={name:'c8',ssh:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
+const snap=(at:number,attention:Attention[]=[])=>({schemaVersion:1,host:'c8',collectedAt:new Date(at).toISOString(),services:[],attention,hardware:{cpuCount:8,load:[0,0,0],uptime:10,kernel:'Linux'}});
+async function serve(monitor:ReturnType<typeof createMonitor>,fn:(base:string)=>Promise<void>){monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await fn('http://127.0.0.1:'+port(monitor.server));}finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}}
 test('a stopped required service produces exactly one notification and one recovery, recorded in /api/events',async()=>{
  const dir=await tmp();try{
-  let clock=T0,attention=[];const {calls,fetchImpl}=recorder();
+  let clock=T0,attention:Attention[]=[];const {calls,fetchImpl}=recorder();
   const config={hosts:[host],stateDir:dir,alerts:{webhookUrl:'http://127.0.0.1:8000/notify'}};
   const monitor=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
   await serve(monitor,async base=>{
    await monitor.refresh();attention=[stopped];for(let i=0;i<3;i++){clock+=20000;await monitor.refresh();}attention=[];clock+=20000;await monitor.refresh();clock+=20000;await monitor.refresh();await monitor.idle();
    assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] c8: service needs attention','[host-monitor] c8: service recovered']);
-   const events=(await (await fetch(base+'/api/events')).json()).events;assert.deepEqual(events.map(e=>[e.type,e.host,e.title]),[['recovered','c8','web.service'],['attention','c8','web.service']]);
-   assert.equal((await (await fetch(base+'/api/events?limit=1')).json()).events.length,1);
+   const events=(await (await fetch(base+'/api/events')).json() as any).events;assert.deepEqual(events.map((e:any)=>[e.type,e.host,e.title]),[['recovered','c8','web.service'],['attention','c8','web.service']]);
+   assert.equal((await (await fetch(base+'/api/events?limit=1')).json() as any).events.length,1);
    for(const q of ['limit=0','limit=501','limit=x','host=other','host=c8;id'])assert.equal((await fetch(base+'/api/events?'+q)).status,400);
    assert.equal((await fetch(base+'/api/events',{method:'POST'})).status,405);
   });
   attention=[stopped];const restarted=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
   await serve(restarted,async base=>{await restarted.refresh();await restarted.idle();assert.equal(calls.length,3,'persisted state still detects a new item after restart');
    const again=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});await again.refresh();await again.idle();again.stop();assert.equal(calls.length,3,'an item already notified is not repeated after restart');
-   assert.equal((await (await fetch(base+'/api/events')).json()).events.length,3);});
+   assert.equal((await (await fetch(base+'/api/events')).json() as any).events.length,3);});
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
 test('a hung host times out on its own without delaying other hosts',async()=>{
- const monitor=createMonitor({hosts:[{...host,name:'hung',ssh:'hung',timeoutSeconds:0.3},host]},{run:async(_bin,args)=>args.includes('hung')?new Promise(()=>{}):{stdout:JSON.stringify(snap(Date.now()))}});
+ const monitor=createMonitor({hosts:[{...host,name:'hung',ssh:'hung',timeoutSeconds:0.3},host]},{run:async(_bin:string,args:string[])=>args.includes('hung')?new Promise(()=>{}):{stdout:JSON.stringify(snap(Date.now()))}});
  await serve(monitor,async base=>{
   const all=monitor.refresh();await monitor.refreshHost('c8');
-  let j=await (await fetch(base+'/api/fleet')).json();assert.deepEqual(j.hosts.map(h=>[h.name,h.status]),[['hung','loading'],['c8','online']]);
+  let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','loading'],['c8','online']]);
   const started=Date.now();await all;assert.ok(Date.now()-started<2000);
-  j=await (await fetch(base+'/api/fleet')).json();assert.deepEqual(j.hosts.map(h=>[h.name,h.status]),[['hung','offline'],['c8','online']]);
+  j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','offline'],['c8','online']]);
  });
  assert.throws(()=>createMonitor({hosts:[{...host,timeoutSeconds:0}]}),/invalid-hosts/);assert.throws(()=>createMonitor({hosts:[{...host,refreshSeconds:'20'}]}),/invalid-hosts/);
 });
 test('staleness follows each host refresh interval',async()=>{
- let clock=T0;const monitor=createMonitor({refreshSeconds:20,hosts:[host,{...host,name:'slow',ssh:'slow',refreshSeconds:120}]},{now:()=>clock,run:async(_b,args)=>({stdout:JSON.stringify({...snap(T0),host:args.includes('slow')?'slow':'c8'})})});
- await serve(monitor,async base=>{await monitor.refresh();clock+=61000;let j=await (await fetch(base+'/api/fleet')).json();assert.deepEqual(j.hosts.map(h=>[h.name,h.refreshSeconds,h.stale]),[['c8',20,true],['slow',120,false]]);
-  clock+=300000;j=await (await fetch(base+'/api/fleet')).json();assert.equal(j.hosts[1].stale,true);});
+ let clock=T0;const monitor=createMonitor({refreshSeconds:20,hosts:[host,{...host,name:'slow',ssh:'slow',refreshSeconds:120}]},{now:()=>clock,run:async(_b:string,args:string[])=>({stdout:JSON.stringify({...snap(T0),host:args.includes('slow')?'slow':'c8'})})});
+ await serve(monitor,async base=>{await monitor.refresh();clock+=61000;let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.refreshSeconds,h.stale]),[['c8',20,true],['slow',120,false]]);
+  clock+=300000;j=await (await fetch(base+'/api/fleet')).json() as any;assert.equal(j.hosts[1].stale,true);});
 });
 test('alert configuration rejects unsafe webhooks and never needs a token value',()=>{
  for(const alerts of [{webhookUrl:'https://api.telegram.org/bot123/sendMessage'},{webhookUrl:'http://127.0.0.1:8000/notify',authEnv:'lower-case'},{webhookUrl:'http://127.0.0.1:8000/notify',quietHours:{start:'x',end:'07:00'}},{webhookUrl:'http://127.0.0.1:8000/notify',kinds:['service','bogus kind!']},{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:-1}])assert.throws(()=>createMonitor({hosts:[host],alerts}),/invalid-alerts/);
@@ -107,8 +108,8 @@ test('alert configuration rejects unsafe webhooks and never needs a token value'
 });
 test('history keeps persisting after events.jsonl is removed externally and reports it once with a fixed warning',async()=>{
  const dir=await tmp();try{
-  const warnings=[];const h=createHistory({dir,maxBytes:600,keep:100,log:m=>warnings.push(m)});await h.load();
-  const ev=i=>({at:new Date(T0+i*1000).toISOString(),host:'c8',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});
+  const warnings:string[]=[];const h=createHistory({dir,maxBytes:600,keep:100,log:(m:string)=>warnings.push(m)});await h.load();
+  const ev=(i:number)=>({at:new Date(T0+i*1000).toISOString(),host:'c8',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});
   for(let i=0;i<4;i++)h.add(ev(i));await h.flush();
   await fs.rm(path.join(dir,'events.jsonl'));
   for(let i=4;i<12;i++)h.add(ev(i));await h.flush();

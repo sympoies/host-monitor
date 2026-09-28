@@ -8,6 +8,6 @@ The dashboard retains accurate offline/stale state, shows installed inactive ser
 
 ## Run and validate
 
-Use Node 24 or newer. Run `npm run validate`. Configure each host and the central server as described in [DEVELOPMENT.md](DEVELOPMENT.md). Infrastructure owns host identities, required services, loopback probes, installation, restart, rollback, and tailnet routing. A new host is a configuration entry, not another copy of the web application.
+Use Node 24 or newer. The code is TypeScript that Node runs directly; run `npm ci` once for the pinned type-checking dev dependencies, then `npm run validate`. Configure each host and the central server as described in [DEVELOPMENT.md](DEVELOPMENT.md). Infrastructure owns host identities, required services, loopback probes, installation, restart, rollback, and tailnet routing. A new host is a configuration entry, not another copy of the web application.
 
 The app currently runs as a native user service with an immutable installed artifact. It does not build inside a host Compose stack. Preserve the last installed release for rollback, and verify both host snapshots and rendered browser behavior before declaring deployment complete.

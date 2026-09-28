@@ -2,11 +2,21 @@
 
 Node 24 or newer is required. There are no third-party runtime dependencies.
 
-Run `npm run validate` for syntax and deterministic collector/server tests; CI runs it on every pull request and also builds and verifies an artifact from the clean checkout. Run `node src/collector.mjs --config <host-config.json>` for a host snapshot. Start the central server with `node src/server.mjs --config <server-config.json>` and open its loopback URL for isolated UI acceptance. Production installation and tailnet exposure are owned by the host infra repositories.
+> **Entry points changed in 0.3.0.** The code is TypeScript and the entry points are now `src/collector.ts` and `src/server.ts` (previously `src/collector.mjs` and `src/server.mjs`). The release admission script is now `verify-artifact.mts` (previously `verify-artifact.mjs`). An infrastructure repository that upgrades to 0.3.0 must update its collector path in server configurations, its service `ExecStart`, and its install steps in the same change. Releases up to 0.2.0 keep the old paths.
+
+### TypeScript
+
+All Node code (`src/`, `scripts/`, `test/`) is TypeScript that Node runs directly through its built-in type stripping, so there is no build step and the installed artifact runs the `.ts` sources as shipped. Use erasable syntax only: type annotations, `import type`, `as`, and `!` are fine; enums, namespaces, parameter properties, and other syntax that needs code generation are not. Relative imports name the `.ts` file. `scripts/verify-artifact.mts` uses `.mts` because it is a standalone release asset that must stay an ES module wherever it is downloaded. Shell scripts stay shell.
+
+The browser code is `public/app.ts`. Browsers cannot strip types, so `tsc` emits `public/app.js` from it: `npm run build` writes a gitignored copy into `public/` for local runs, and `scripts/build-artifact.ts` emits a fresh copy into the artifact, never reading the checkout's copy. The served path (`/app.js`) and the Content Security Policy are unchanged, and the artifact ships only the emitted JavaScript.
+
+`typescript` and `@types/node` are pinned devDependencies with a committed `package-lock.json`. Run `npm ci` once per checkout. Type checking is strict: `tsconfig.json` covers Node code, `tsconfig.accept.json` adds the DOM library for the Playwright acceptance script, and `tsconfig.browser.json` covers and emits the browser app.
+
+Run `npm run validate` for type checking (`npm run typecheck`), shell syntax, the browser build, and deterministic collector/server tests; CI runs `npm ci` and `npm run validate` on every pull request and also builds and verifies an artifact from the clean checkout. Run `node src/collector.ts --config <host-config.json>` for a host snapshot. Run `npm run build`, then start the central server with `node src/server.ts --config <server-config.json>` and open its loopback URL for isolated UI acceptance. Production installation and tailnet exposure are owned by the host infra repositories.
 
 Test hardware parsing, service classification, incomplete collection, offline/stale state, static path restrictions, and read-only API behavior. Browser acceptance must verify both host views, service filtering, attention events, last-update freshness, and narrow-screen usability using live installed data. Keep resource sampling distinct from lifetime counters. An inactive successful oneshot is normal; a failed unit or a configured continuously-running service that stops needs attention. An unreachable collector must never appear healthy.
 
-Run browser acceptance against a running server with `node scripts/accept-browser.mjs --config <server-config.json> <url> <private-evidence-dir>`. It expects exactly the hosts in the server configuration, drives installed Chrome headed, and writes screenshots and `browser-receipt.json` to the evidence directory. Playwright is not a project dependency: it resolves from this checkout unless `HOST_MONITOR_PLAYWRIGHT_ROOT` names a directory whose `node_modules` contains it.
+Run browser acceptance against a running server with `node scripts/accept-browser.ts --config <server-config.json> <url> <private-evidence-dir>`. It expects exactly the hosts in the server configuration, drives installed Chrome headed, and writes screenshots and `browser-receipt.json` to the evidence directory. Playwright is not a project dependency: it resolves from this checkout unless `HOST_MONITOR_PLAYWRIGHT_ROOT` names a directory whose `node_modules` contains it.
 
 A host configuration has `name` (the server host name, without dots), optional `identity`, `required` (`system` and `user` lists), `probes`, `docker`, `requiredContainers`, and `nvidia`. The collector refuses to run unless the machine hostname matches `identity`, or `name` when `identity` is absent; both sides are compared case-insensitively after removing a `.local` suffix, so a Mac that reports `MacBook.local` uses `"identity": "MacBook"`.
 
@@ -68,22 +78,22 @@ Example server configuration:
 ```json
 {"port":9105,"refreshSeconds":20,"stateDir":"/var/lib/host-monitor","historyMaxBytes":1048576,
  "alerts":{"webhookUrl":"http://127.0.0.1:8000/notify","offlineAfterSeconds":300,"quietHours":{"start":"23:00","end":"07:00","timeZone":"Asia/Taipei"}},
- "hosts":[{"name":"c8","ssh":"c8","node":"/usr/bin/node","collector":"/opt/host-monitor/current/src/collector.mjs","config":"/etc/host-monitor/c8.json","refreshSeconds":30,"timeoutSeconds":20}]}
+ "hosts":[{"name":"c8","ssh":"c8","node":"/usr/bin/node","collector":"/opt/host-monitor/current/src/collector.ts","config":"/etc/host-monitor/c8.json","refreshSeconds":30,"timeoutSeconds":20}]}
 ```
 
 ## Releases
 
-A release is the immutable artifact from `scripts/build-artifact.mjs`, identified by its artifact id: the SHA-256 content hash recorded as `artifact` in its `manifest.json`. To cut one, merge a change that sets `package.json` `version` and adds its release entry to the development log (`docs/devlog/`; this repository keeps no `CHANGELOG.md`), then push the matching tag from the merged commit on `main`:
+A release is the immutable artifact from `scripts/build-artifact.ts`, identified by its artifact id: the SHA-256 content hash recorded as `artifact` in its `manifest.json`. To cut one, merge a change that sets `package.json` `version` and adds its release entry to the development log (`docs/devlog/`; this repository keeps no `CHANGELOG.md`), then push the matching tag from the merged commit on `main`:
 
 ```sh
 git tag -s v<version> -m v<version> <merged-main-commit>
 git push origin v<version>
 ```
 
-The `release` workflow runs `npm run validate`, refuses a tag that differs from `v<package.json version>`, and publishes a GitHub release with these assets, produced by `scripts/package-release.sh OUTPUT TAG`:
+The `release` workflow runs `npm ci` and `npm run validate`, refuses a tag that differs from `v<package.json version>`, and publishes a GitHub release with these assets, produced by `scripts/package-release.sh OUTPUT TAG`:
 
 - `host-monitor-<version>-<artifact-id>.tar.gz`: the artifact under one top-level directory of the same name.
-- `verify-artifact.mjs` and `install-release.sh`: the admission and install scripts matching that artifact.
+- `verify-artifact.mts` and `install-release.sh`: the admission and install scripts matching that artifact.
 - `artifact-id`: the artifact id on one line.
 - `SHA256SUMS`: checksums of the four files above.
 
@@ -100,7 +110,7 @@ cd release
 sha256sum --check --strict SHA256SUMS
 test "$(cat artifact-id)" = "$artifact"
 tar -xzf "host-monitor-$version-$artifact.tar.gz"
-node verify-artifact.mjs "host-monitor-$version-$artifact" "$artifact"
+node verify-artifact.mts "host-monitor-$version-$artifact" "$artifact"
 bash install-release.sh "$(command -v node)" "host-monitor-$version-$artifact" "$artifact" "$HOME"
 ```
 
