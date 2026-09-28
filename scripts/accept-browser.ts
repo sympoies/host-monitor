@@ -1,4 +1,4 @@
-import {createRequire} from 'node:module';import fs from 'node:fs/promises';import path from 'node:path';import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';import fs from 'node:fs/promises';import path from 'node:path';import assert from 'node:assert/strict';import {resourceExpectation} from './accept-expectations.ts';
 // Browser callbacks passed to Playwright run in the page, so tsconfig.accept.json checks this file with the DOM library.
 // Usage: node scripts/accept-browser.ts --config <server-config.json> <url> <private-evidence-dir>
 // The expected hosts are the server configuration's hosts. Playwright resolves from this checkout unless
@@ -17,8 +17,11 @@ try{
  for(const host of hosts){
   await page.locator('#hosts .host').filter({has:page.locator('.host-name',{hasText:new RegExp('^'+host+'$')})}).click();
   await page.waitForFunction((host:string)=>document.querySelector('#host-title')?.textContent===host&&document.querySelector('#resources .metric'),host);
-  assert.equal(await page.locator('#resources .metric').count(),4);
-  assert.ok(await page.locator('#disks .disk').count()>0);
+  // Hosts whose resources are external (macOS, Beszel) show a pointer instead of metrics and disk rows.
+  const expected=resourceExpectation(await page.evaluate(async(host:string)=>(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((h:{name:string})=>h.name===host)?.snapshot,host));
+  assert.equal(await page.locator('#resources .metric').count(),expected.metrics);
+  if(expected.diskRows)assert.ok(await page.locator('#disks .disk').count()>0);
+  else{assert.ok((await page.locator('#resources').innerText()).includes(expected.text));assert.ok((await page.locator('#disks').innerText()).includes(expected.text));}
   const inventory=await page.evaluate(async(host:string)=>{const s=(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((h:{name:string})=>h.name===host)?.snapshot;return s?s.services.length+(s.containers?.length??0):0;},host);
   await page.locator('#filter').selectOption('all');assert.ok(inventory>0);assert.equal(await page.locator('#services tr').count(),inventory);
   const sample=(await page.locator('#services tr td:first-child').first().evaluate((td:Element)=>td.firstChild?.textContent??'')).trim();
