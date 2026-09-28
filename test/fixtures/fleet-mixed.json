@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "serverTime": "2026-09-28T15:34:26.260Z",
+  "refreshSeconds": 20,
+  "hosts": [
+    {"name": "linux-a", "status": "online", "snapshot": {"schemaVersion": 1, "host": "linux-a", "platform": "linux", "resources": "collected", "collectedAt": "2026-09-28T15:34:15.402Z", "services": [{"name": "example.service"}], "containers": []}},
+    {"name": "mac-a", "status": "online", "snapshot": {"schemaVersion": 1, "host": "mac-a", "platform": "darwin", "resources": "external", "collectedAt": "2026-09-28T15:34:15.656Z", "services": [{"name": "com.example.agent"}]}},
+    {"name": "linux-legacy", "status": "online", "snapshot": {"schemaVersion": 1, "host": "linux-legacy", "collectedAt": "2026-09-28T15:34:15.783Z", "services": [{"name": "legacy.service"}]}},
+    {"name": "offline-a", "status": "offline", "snapshot": null}
+  ]
+}
