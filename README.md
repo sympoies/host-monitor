@@ -4,7 +4,7 @@ A central, read-only web dashboard for installed system/user services on Linux (
 
 Each host owns its collector configuration through its infrastructure repository. The portable collector emits a versioned JSON snapshot over an existing SSH connection; the server schedules collection and serves the UI on loopback. Tailnet exposure belongs to infrastructure. There are no third-party runtime dependencies, browser shell actions, raw journals, environment dumps, or provider data.
 
-The dashboard retains accurate offline/stale state, shows installed inactive services, treats successful dormant oneshots as idle, and flags failed units, stopped required services, missing required containers, failed probes, and disk/memory pressure. Running containers without a health check are labeled unverified instead of healthy. Journal counts are grouped by unit and priority, and macOS log counts by required launchd job; their private message contents never leave the collector.
+The dashboard retains accurate offline/stale state, shows installed inactive services, treats successful dormant oneshots as idle, and flags failed units, stopped required services, missing required containers, failed probes, and disk/memory pressure. Running containers without a health check are labeled unverified instead of healthy. Each host is collected on its own schedule and timeout. Attention transitions are kept in a bounded on-disk log and can be sent, once per transition, to the fleet notification relay. Journal counts are grouped by unit and priority, and macOS log counts by required launchd job; their private message contents never leave the collector.
 
 ## Run and validate
 

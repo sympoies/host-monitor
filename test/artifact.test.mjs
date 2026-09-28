@@ -32,3 +32,9 @@ test('release installation admits only a verified artifact and is idempotent',as
   await fs.appendFile(release+'/public/app.js','\n// drift');await assert.rejects(install(artifact),/file mismatch/);
  }finally{await fs.rm(tmp,{recursive:true,force:true});}
 });
+test('a built artifact contains every module the server and collector import',async()=>{
+ const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'host-monitor-modules-'));
+ try{await exec(process.execPath,[root+'/scripts/build-artifact.mjs',tmp+'/a']);
+  const {stdout}=await exec(process.execPath,['--input-type=module','-e',`await import(${JSON.stringify(tmp+'/a/src/server.mjs')});await import(${JSON.stringify(tmp+'/a/src/collector.mjs')});console.log('ok')`]);assert.equal(stdout.trim(),'ok');
+ }finally{await fs.rm(tmp,{recursive:true,force:true});}
+});
