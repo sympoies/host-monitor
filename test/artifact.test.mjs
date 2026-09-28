@@ -11,6 +11,7 @@ test('artifact admission rejects added files, symlinks and changed content befor
  try{
   const artifact=path.join(tmp,'artifact');const built=await exec(process.execPath,[root+'/scripts/build-artifact.mjs',artifact]);const hash=JSON.parse(built.stdout).artifact;
   const verify=()=>exec(process.execPath,[root+'/scripts/verify-artifact.mjs',artifact,hash]);
+  const manifest=JSON.parse(await fs.readFile(artifact+'/manifest.json','utf8'));assert.equal(manifest.version,JSON.parse(await fs.readFile(root+'/package.json','utf8')).version);
   await verify();await fs.writeFile(artifact+'/extra','unexpected');await assert.rejects(verify,/inventory mismatch/);await fs.unlink(artifact+'/extra');
   await fs.symlink('/dev/null',artifact+'/link');await assert.rejects(verify,/non-regular entry/);await fs.unlink(artifact+'/link');
   await fs.appendFile(artifact+'/public/app.js','\n// changed');await assert.rejects(verify,/file mismatch/);
