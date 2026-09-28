@@ -19,7 +19,7 @@ test('transitions are emitted once per new attention item, recovery and offline 
  assert.deepEqual(t.online('c8',[],T0+940000),[]);
 });
 test('webhook URLs must be loopback or tailnet without embedded credentials',()=>{
- for(const url of ['http://127.0.0.1:8000/notify','http://localhost:8000/notify','http://[::1]:8000/notify','https://sympoies.tail841b2e.ts.net:8001/notify','http://100.99.173.75:8000/notify'])assert.equal(webhookUrl(url).href,new URL(url).href);
+ for(const url of ['http://127.0.0.1:8000/notify','http://localhost:8000/notify','http://[::1]:8000/notify','https://relay.example.ts.net:8001/notify','http://100.64.0.10:8000/notify'])assert.equal(webhookUrl(url).href,new URL(url).href);
  for(const url of ['http://example.com/notify','https://relay.ts.net.example.com/','http://user:secret@127.0.0.1:8000/notify','http://127.0.0.1:8000/notify?token=x','http://10.0.0.5:8000/','http://100.128.0.1/','file:///tmp/x','not a url'])assert.throws(()=>webhookUrl(url),/invalid-alerts-webhook/);
 });
 test('quiet hours wrap midnight in the configured time zone',()=>{
