@@ -7,15 +7,17 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const exec=promisify(execFile),root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../public');
 const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/style.css',['style.css','text/css']]]);
+// Service-name substrings that the dashboard lists under its default "important services" filter.
+function serviceMarkers(value=[]){if(!Array.isArray(value)||value.length>100||value.some(v=>typeof v!=='string'||!/^[a-zA-Z0-9_.:@-]{1,128}$/.test(v)))throw new Error('invalid-important-services');return [...value];}
 export function createMonitor(config,{run=exec,now=()=>Date.now()}={}) {
- const hosts=config.hosts.map(h=>({...h}));if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
- const state=new Map(hosts.map(h=>[h.name,{name:h.name,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
+ const hosts=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices)}));if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
+ const state=new Map(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
  let refreshing=false,timer;
  async function refresh(){if(refreshing)return;refreshing=true;try{await Promise.all(hosts.map(async h=>{const old=state.get(h.name);const attempt=new Date(now()).toISOString();try{
   const args=h.ssh?['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh,h.node,h.collector,'--config',h.config]:[h.collector,'--config',h.config];
   if(h.ssh && (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh) || [h.node,h.collector,h.config].some(x=>typeof x!=='string'||!/^[a-zA-Z0-9_./-]+$/.test(x))))throw new Error('invalid-remote-command');
   const output=await run(h.ssh?'ssh':h.node,args,{timeout:30000,maxBuffer:8*1024*1024,encoding:'utf8'});const snapshot=projectSnapshot(JSON.parse(output.stdout));if(snapshot.schemaVersion!==1||snapshot.host!==h.name||!Array.isArray(snapshot.services)||!Array.isArray(snapshot.attention)||!Number.isFinite(Date.parse(snapshot.collectedAt)))throw new Error('invalid-snapshot');
-  state.set(h.name,{name:h.name,status:'online',snapshot,lastAttempt:attempt,lastSuccess:new Date(now()).toISOString()});
+  state.set(h.name,{name:h.name,importantServices:h.importantServices,status:'online',snapshot,lastAttempt:attempt,lastSuccess:new Date(now()).toISOString()});
  }catch{state.set(h.name,{...old,status:'offline',lastAttempt:attempt,error:'collector-unavailable'});}}));}finally{refreshing=false;}}
  const server=http.createServer(async(req,res)=>{res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   if(!['GET','HEAD'].includes(req.method)){res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;}
