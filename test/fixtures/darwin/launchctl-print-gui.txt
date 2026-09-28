@@ -1,0 +1,43 @@
+gui/501 = {
+	type = login
+	handle = 100002
+	active count = 492
+	service count = 491
+	active service count = 178
+	creator = loginwindow[168]
+	creator euid = 0
+	session = Aqua
+	security context = {
+		uid = 501
+		asid = 100002
+	}
+
+	bringup time = 69 ms
+	environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.private-canary/Listeners
+	}
+
+	services = {
+		   17674      - 	application.com.example.Editor.410592500.410592506
+		       0      0 	io.tailscale.ipn.macsys.login-item-helper
+		   72425      - 	com.example.tunnel
+		       0      0 	com.example.sync
+		       0     78 	com.example.broken
+		       0    -15 	com.example.stopped
+		       0   (pe) 	com.apple.progressd
+		       0      1 	com.example.optional-helper
+		    1081      0 	com.apple.cfprefsd.xpc.agent
+	}
+
+	unmanaged processes = {
+		com.apple.xpc.launchd.unmanaged.loginwindow.168 = {
+			active count = 1
+		}
+	}
+
+	disabled services = {
+		"com.example.disabled" => disabled
+	}
+
+	properties = gui | gui login
+}

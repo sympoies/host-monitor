@@ -1,0 +1,22 @@
+system = {
+	type = system
+	handle = 0
+	active count = 955
+	service count = 443
+	active service count = 159
+	creator = launchd[1]
+	creator euid = 0
+	subdomains = {
+		pid/52587
+	}
+
+	services = {
+		     172      - 	com.apple.runningboardd
+		       0   (pe) 	com.apple.lskdd
+		       0      1 	com.apple.wifiFirmwareLoader
+		       0      0 	com.apple.tmp_cleaner
+		     292      - 	org.example.daemon
+	}
+
+	properties = uncorked | audit check done | bootcache hack | early boot complete | log store online
+}

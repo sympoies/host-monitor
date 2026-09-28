@@ -1,0 +1,26 @@
+system/org.example.daemon = {
+	active count = 1
+	path = /Library/LaunchDaemons/org.example.daemon.plist
+	type = LaunchDaemon
+	state = running
+
+	program = /Library/Application Support/Example/example-daemon
+	arguments = {
+		/Library/Application Support/Example/example-daemon
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	domain = system
+	username = root
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 292
+	immediate reason = speculative
+
+	spawn type = daemon (3)
+	properties = keepalive | runatload | inferred program
+}
