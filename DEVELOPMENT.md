@@ -105,7 +105,7 @@ An infrastructure repository pins the release by both version and artifact id, a
 
 ```sh
 version=<version> artifact=<artifact-id>
-gh release download "v$version" --repo serenvia/host-monitor --dir release
+gh release download "v$version" --repo sympoies/host-monitor --dir release
 cd release
 sha256sum --check --strict SHA256SUMS
 test "$(cat artifact-id)" = "$artifact"
