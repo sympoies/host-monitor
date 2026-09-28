@@ -16,3 +16,9 @@ test('a request target that cannot be parsed is answered 400 without stopping th
  const status=await new Promise((resolve,reject)=>{const socket=net.connect(m.server.address().port,'127.0.0.1',()=>socket.end('GET //[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'));let data='';socket.setEncoding('utf8');socket.on('data',d=>data+=d);socket.on('error',reject);socket.on('close',()=>resolve(data.split('\r\n')[0]));});
  assert.equal(status,'HTTP/1.1 400 Bad Request');assert.equal((await fetch(base+'/healthz')).status,200);
 });});
+test('remote collector commands outside the ssh allowlist never reach the runner',async()=>{
+ const bad={config:'/app/h.json;id',collector:'$(id)',node:'/usr/bin/node x',ssh:'-oProxyCommand=id'};
+ const calls=[];const monitor=createMonitor({hosts:Object.entries(bad).map(([field,value],i)=>({...host,name:'bad'+i,[field]:value}))},{run:async(...args)=>{calls.push(args);return {stdout:JSON.stringify(snapshot)};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+monitor.server.address().port+'/api/fleet')).json();
+ assert.deepEqual(j.hosts.map(h=>[h.name,h.status,h.snapshot]),[['bad0','offline',null],['bad1','offline',null],['bad2','offline',null],['bad3','offline',null]]);assert.equal(calls.length,0);}finally{await new Promise(r=>monitor.server.close(r));}
+});
