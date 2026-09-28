@@ -20,3 +20,17 @@ test('server CLI binds loopback on the configured port, answers /healthz and exi
   child.kill('SIGTERM');const [code,signal]=await exited;assert.equal(signal,null);assert.equal(code,0);
  }finally{if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await fs.rm(tmp,{recursive:true,force:true});}
 });
+test('server CLI starts when launched through a symlinked release directory',async()=>{
+ // Infra repositories run the server as <prefix>/current/src/server.mjs, where current links to the installed release.
+ const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'host-monitor-link-'));let child;
+ try{
+  const port=await freePort();
+  await fs.symlink(root,tmp+'/current');
+  await fs.writeFile(tmp+'/server.json',JSON.stringify({port,refreshSeconds:60,hosts:[{name:'local',node:process.execPath,collector:tmp+'/missing-collector.mjs',config:tmp+'/missing-host.json'}]}));
+  child=spawn(process.execPath,[tmp+'/current/src/server.mjs','--config',tmp+'/server.json'],{stdio:['ignore','pipe','pipe']});
+  let stdout='';child.stdout.setEncoding('utf8').on('data',d=>stdout+=d);
+  const exited=once(child,'exit');
+  await new Promise((resolve,reject)=>{const deadline=setTimeout(()=>reject(Error('server did not start')),10000);const poll=setInterval(()=>{if(stdout.includes('listening')){clearTimeout(deadline);clearInterval(poll);resolve();}},25);exited.then(([code])=>{clearTimeout(deadline);clearInterval(poll);reject(Error('server exited early with '+code));});});
+  const r=await fetch(`http://127.0.0.1:${port}/healthz`);assert.equal(r.status,200);
+ }finally{child?.kill('SIGTERM');if(child&&child.exitCode===null)await once(child,'exit');await fs.rm(tmp,{recursive:true,force:true});}
+});
