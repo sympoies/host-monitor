@@ -20,7 +20,7 @@ export function projectSnapshot(value:unknown):Snapshot{
   hardware:record({cpuCount:number,cpuModel:str,cpuBusy:number,load:numericList,uptime:number,kernel:name}),
   memory:(value:unknown)=>value===undefined?undefined:object(value,{total:number,available:number,used:number,swapTotal:number,swapUsed:number}),
   disks:list(record({source:str,type:name,total:number,used:number,available:number,percent:number,mount:str}),256),
-  services:list(record({name,scope:name,manager:name,description:str,installed:name,active:name,sub:name,type:name,result:name,exitCode:number,memoryBytes:number,lastExit:str,lastStarted:str,triggers:str,required:boolean,health:name})),
+  services:list(record({name,scope:name,manager:name,description:str,installed:name,active:name,sub:name,type:name,result:name,exitCode:number,memoryBytes:number,lastExit:str,lastStarted:str,triggers:str,restarts:number,required:boolean,health:name})),
   failedUnits:list(record({scope:name,name,active:name,sub:name})),
   containers:list(record({name,image:str,state:name,status:str,health:name}),2000),
   journalErrors:list(record({unit:name,scope:name,process:name,count:number,lastAt:name}),2000),

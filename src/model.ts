@@ -1,7 +1,7 @@
 export type Health='ok'|'error'|'idle'|'inactive'|'transition'|'unknown';
 export interface MemInfo{total:number;available:number;used:number;swapTotal:number;swapUsed:number}
 export interface Disk{source:string;type:string;total:number;used:number;available:number;percent:number;mount:string}
-export interface Service{name:string;scope:string;health:Health;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;exitCode?:number|null;memoryBytes?:number|null;lastExit?:string|null;lastStarted?:string|null;triggers?:string;required?:boolean}
+export interface Service{name:string;scope:string;health:Health;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;exitCode?:number|null;memoryBytes?:number|null;lastExit?:string|null;lastStarted?:string|null;triggers?:string;restarts?:number|null;required?:boolean}
 export interface FailedUnit{scope:string;name:string;active?:string;sub?:string}
 export interface Container{name:string;image:string;state:string;status:string;health:string}
 export interface JournalEntry{unit:string;scope:string;process?:string;count:number;lastAt:string|null}
