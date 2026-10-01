@@ -1,6 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {parseMeminfo,cpuBusy,classifyUnit,parseDisks,attentionFor,parseContainers,parseGpus,loopbackProbeUrl} from '../src/model.ts';
 import {collectSystemd,journal} from '../src/collector.ts';
+import {projectSnapshot} from '../src/schema.ts';
 test('available memory includes reclaimable cache and invalid snapshots are rejected',()=>{
  const m=parseMeminfo('MemTotal: 1000 kB\nMemAvailable: 700 kB\nSwapTotal: 100 kB\nSwapFree: 60 kB');assert.equal(m.used,300*1024);assert.equal(m.swapUsed,40*1024);assert.throws(()=>parseMeminfo('MemTotal: 1 kB\nMemAvailable: 2 kB'));
 });
@@ -49,4 +50,16 @@ test('probes are admitted only as plain HTTP to a loopback host',()=>{
  for(const url of ['http://127.0.0.1:8080/healthz','http://localhost:3000/','http://[::1]:9000/ready'])assert.equal(loopbackProbeUrl(url).href,new URL(url).href);
  for(const url of ['https://127.0.0.1/healthz','http://127.0.0.2/','http://example.com/','http://localhost.example.com/','http://127.0.0.1@example.com/','http://10.0.0.5:8080/','file:///etc/passwd'])assert.throws(()=>loopbackProbeUrl(url),/probe-must-be-loopback/);
  assert.throws(()=>loopbackProbeUrl('not a url'));
+});
+test('systemd restart counters are collected so the server can detect restart loops',async()=>{
+ const run=async(_bin:string,args:string[])=>{
+  if(args.includes('list-unit-files'))return JSON.stringify([{unit_file:'serve.service',state:'enabled'},{unit_file:'old.service',state:'enabled'}]);
+  if(args.includes('list-units'))return '[]';
+  assert.ok(args.some((a:string)=>a.startsWith('--property=')&&a.split(',').includes('NRestarts')));
+  return 'Id=serve.service\nActiveState=active\nResult=success\nNRestarts=4\n\nId=old.service\nActiveState=active\nResult=success\n';
+ };
+ const rows=await collectSystemd('user',[],run);
+ assert.equal(rows.find(r=>r.name==='serve.service')!.restarts,4);assert.equal(rows.find(r=>r.name==='old.service')!.restarts,null,'systemd without NRestarts reports no counter');
+ const projected=projectSnapshot({schemaVersion:1,host:'c8',collectedAt:'2026-10-01T02:02:00Z',hardware:{cpuCount:1,load:[0,0,0],uptime:1,kernel:'Linux'},services:rows,attention:[]});
+ assert.equal(projected.services.find(s=>s.name==='serve.service')!.restarts,4);
 });

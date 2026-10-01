@@ -23,11 +23,11 @@ export async function collectSystemd(scope:string,required:string[]=[],run:Run=c
  const loaded=JSON.parse(await run('systemctl',[...prefix,'list-units','--all','--type=service','--no-pager','--output=json'])) as UnitRow[];
  const names=[...new Set([...files.map(r=>r.unit_file),...loaded.map(r=>r.unit),...required])].filter(unitName);
  const queryNames=names.filter(name=>!name.endsWith('@.service'));
- const props=queryNames.length?parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Names,Description,ActiveState,SubState,Type,Result,UnitFileState,ExecMainStatus,MemoryCurrent,ExecMainExitTimestamp,ActiveEnterTimestamp,Triggers','--',...queryNames])):[];
+ const props=queryNames.length?parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Names,Description,ActiveState,SubState,Type,Result,UnitFileState,ExecMainStatus,MemoryCurrent,ExecMainExitTimestamp,ActiveEnterTimestamp,Triggers,NRestarts','--',...queryNames])):[];
  const byId=new Map<string,Record<string,string>>();for(const p of props)for(const name of [p.Id,...(p.Names||'').split(/\s+/)])if(name)byId.set(name,p);
  const byLoaded=new Map(loaded.map(p=>[p.unit,p]));
  return names.map(name=>{const p:Record<string,string|undefined>=byId.get(name)??(name.endsWith('@.service')?{ActiveState:'inactive',Type:'template'}:{}),r:Partial<UnitRow>=byLoaded.get(name)??{},f=files.find(r=>r.unit_file===name);
-  const unit={name,scope,description:p.Description||r.description||name,installed:f?.state||p.UnitFileState||'generated',active:p.ActiveState||r.active||'unknown',sub:p.SubState||r.sub||'',type:p.Type||'',result:p.Result||'',exitCode:p.ExecMainStatus?Number(p.ExecMainStatus):null,memoryBytes:/^\d+$/.test(p.MemoryCurrent||'')?Number(p.MemoryCurrent):null,lastExit:p.ExecMainExitTimestamp||null,lastStarted:p.ActiveEnterTimestamp||null,triggers:p.Triggers||'',required:required.includes(name)};
+  const unit={name,scope,description:p.Description||r.description||name,installed:f?.state||p.UnitFileState||'generated',active:p.ActiveState||r.active||'unknown',sub:p.SubState||r.sub||'',type:p.Type||'',result:p.Result||'',exitCode:p.ExecMainStatus?Number(p.ExecMainStatus):null,memoryBytes:/^\d+$/.test(p.MemoryCurrent||'')?Number(p.MemoryCurrent):null,lastExit:p.ExecMainExitTimestamp||null,lastStarted:p.ActiveEnterTimestamp||null,triggers:p.Triggers||'',restarts:/^\d+$/.test(p.NRestarts||'')?Number(p.NRestarts):null,required:required.includes(name)};
   return {...unit,health:classifyUnit(unit,required)};
  });
 }

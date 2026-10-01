@@ -6,7 +6,7 @@ import type {Attention} from './model.ts';
 export type EventType='attention'|'recovered'|'offline'|'online';
 export interface AlertEvent{at:string;host:string;type:EventType;kind:string;title:string;severity:string;detail?:string}
 export interface QuietHours{start:number;end:number;timeZone:string}
-export interface TrackerState{[host:string]:{active?:Attention[];offlineAlerted?:boolean}}
+export interface TrackerState{[host:string]:{active?:Attention[];baseline?:Attention[];offlineAlerted?:boolean}}
 export interface Message{title:string;body:string;type:string;format?:string}
 type Fetch=(input:URL,init:RequestInit)=>Promise<Pick<Response,'ok'|'status'>&{body?:{cancel?:()=>Promise<void>}|null}>;
 type Log=(message:string)=>void;
@@ -44,28 +44,56 @@ export function inQuietHours(quiet:QuietHours|null,ms:number):boolean {
  return quiet.start<quiet.end?now>=quiet.start&&now<quiet.end:now>=quiet.start||now<quiet.end;
 }
 
-interface HostTrack{known:boolean;active:Map<string,Attention>;offlineAlerted:boolean;offlineSince:number|null}
-// Tracks the active attention items per host. The first observation of a host without saved state is a silent baseline.
-export function createTracker({offlineAfterMs=300000,state={}}:{offlineAfterMs?:number;state?:TrackerState}={}) {
- const hosts=new Map<string,HostTrack>(Object.entries(state).map(([name,s])=>[name,{known:true,active:new Map((s.active??[]).map(a=>[key(a.kind,a.title),a])),offlineAlerted:!!s.offlineAlerted,offlineSince:null}]));
- const get=(name:string)=>{let s=hosts.get(name);if(!s){s={known:false,active:new Map(),offlineAlerted:false,offlineSince:null};hosts.set(name,s);}return s;};
+export interface RestartLoop{restarts:number;windowMs:number}
+type Grace=number|((host:string,item:Attention)=>number);
+interface Seen{item:Attention;since:number}
+interface HostTrack{known:boolean;seen:Map<string,Seen>;alerted:Map<string,Attention>;baseline:Map<string,Attention>;episodes:Map<string,number[]>;restarts:Map<string,number>;offlineAlerted:boolean;offlineSince:number|null}
+// A self-healing restart (a binary replacement exits 75 and systemd restarts it; a model takes seconds to load) is
+// over well within a minute, while host refresh intervals are 20 s to 5 min. 90 s therefore spans the observed
+// restarts with margin, and a real outage still alerts on the first collection at least 90 s after it was first seen.
+export const DEFAULT_GRACE_MS=90000;
+export const DEFAULT_RESTART_LOOP:RestartLoop={restarts:3,windowMs:600000};
+// Tracks attention items per host. An item alerts once it has stayed unhealthy for its grace window, or when it starts
+// `restarts` times within `windowMs` (systemd NRestarts steps, or new failures of items without a counter). Only alerted
+// items send a recovery. The first observation of a host without saved state is a silent baseline.
+export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GRACE_MS,restartLoop=DEFAULT_RESTART_LOOP}:{offlineAfterMs?:number;state?:TrackerState;graceMs?:Grace;restartLoop?:RestartLoop}={}) {
+ const items=(list:Attention[]|undefined)=>new Map((list??[]).map(a=>[key(a.kind,a.title),a]));
+ const blank=():HostTrack=>({known:false,seen:new Map(),alerted:new Map(),baseline:new Map(),episodes:new Map(),restarts:new Map(),offlineAlerted:false,offlineSince:null});
+ const hosts=new Map<string,HostTrack>(Object.entries(state).map(([name,s])=>[name,{...blank(),known:true,alerted:items(s.active),baseline:items(s.baseline),offlineAlerted:!!s.offlineAlerted}]));
+ const get=(name:string)=>{let s=hosts.get(name);if(!s){s=blank();hosts.set(name,s);}return s;};
+ const grace=(host:string,a:Attention)=>typeof graceMs==='function'?graceMs(host,a):graceMs;
  const event=(at:number,host:string,type:EventType,{kind,title,severity,detail}:Attention):AlertEvent=>({at:new Date(at).toISOString(),host,type,kind,title,severity,...(detail?{detail}:{})});
- function online(host:string,attention:Attention[],at:number):AlertEvent[] {
+ const looping=(times:number[]|undefined)=>restartLoop.restarts>0&&(times?.length??0)>=restartLoop.restarts;
+ // restarts maps a systemd service name to its NRestarts counter. A lower value means the counter was reset (a manual
+ // restart); the first value seen is a baseline. Services with a counter count restarts only from it, so a crash seen
+ // as a failed unit and then as the counter step that restarted it counts once.
+ function online(host:string,attention:Attention[],at:number,restarts:Record<string,number>={}):AlertEvent[] {
   const s=get(host),events:AlertEvent[]=[];s.offlineSince=null;
   if(s.offlineAlerted){s.offlineAlerted=false;events.push(event(at,host,'online',{kind:'host',title:host,severity:'ok'}));}
   const next=new Map<string,Attention>();for(const a of attention)next.set(key(a.kind,a.title),{kind:a.kind,title:a.title,severity:a.severity,...(a.detail?{detail:a.detail}:{})});
-  if(s.known){
-   for(const [k,a] of next)if(!s.active.has(k))events.push(event(at,host,'attention',a));
-   for(const [k,a] of s.active)if(!next.has(k))events.push(event(at,host,'recovered',{kind:a.kind,title:a.title,severity:'ok'}));
+  if(!s.known){s.known=true;s.baseline=new Map(next);}
+  const started=(k:string,count:number)=>{const times=s.episodes.get(k)??[];for(let i=0;i<Math.min(count,100);i++)times.push(at);s.episodes.set(k,times);};
+  const counted=new Set<string>();
+  for(const [name,count] of Object.entries(restarts)){const k=key('service',name),last=s.restarts.get(name);counted.add(k);s.restarts.set(name,count);if(last!==undefined)started(k,count>=last?count-last:count);}
+  for(const [k,a] of next){const seen=s.seen.get(k);if(seen){seen.item=a;continue;}s.seen.set(k,{item:a,since:at});if(!counted.has(k)&&!s.baseline.has(k))started(k,1);}
+  for(const k of [...s.seen.keys()])if(!next.has(k))s.seen.delete(k);
+  for(const [k,times] of s.episodes){const recent=times.filter(t=>at-t<restartLoop.windowMs);if(recent.length)s.episodes.set(k,recent);else s.episodes.delete(k);}
+  for(const k of [...s.baseline.keys()])if(!next.has(k))s.baseline.delete(k);
+  for(const [k,{item,since}] of s.seen)if(!s.alerted.has(k)&&!s.baseline.has(k)&&at-since>=grace(host,item)){s.alerted.set(k,item);events.push(event(at,host,'attention',item));}
+  for(const [k,times] of s.episodes)if(looping(times)&&!s.alerted.has(k)&&!s.baseline.has(k)){
+   const [kind,title]=k.split('\0'),minutes=Math.round(restartLoop.windowMs/60000);
+   const item={kind,title,severity:'error',detail:counted.has(k)?`restart loop · ${times.length} restarts in ${minutes} min`:`flapping · ${times.length} failures in ${minutes} min`};
+   s.alerted.set(k,item);events.push(event(at,host,'attention',item));
   }
-  s.known=true;s.active=next;return events;
+  for(const [k,a] of s.alerted)if(!next.has(k)&&!looping(s.episodes.get(k))){s.alerted.delete(k);events.push(event(at,host,'recovered',{kind:a.kind,title:a.title,severity:'ok'}));}
+  return events;
  }
  function offline(host:string,at:number):AlertEvent[] {
   const s=get(host);const since=s.offlineSince??=at;
   if(s.offlineAlerted||!(offlineAfterMs>0)||at-since<offlineAfterMs)return [];
   s.offlineAlerted=true;return [event(at,host,'offline',{kind:'host',title:host,severity:'error',detail:`no successful collection for ${Math.round((at-since)/60000)} min`})];
  }
- const snapshot=():TrackerState=>Object.fromEntries([...hosts].filter(([,s])=>s.known).map(([name,s])=>[name,{active:[...s.active.values()],offlineAlerted:s.offlineAlerted}]));
+ const snapshot=():TrackerState=>Object.fromEntries([...hosts].filter(([,s])=>s.known).map(([name,s])=>[name,{active:[...s.alerted.values()],...(s.baseline.size?{baseline:[...s.baseline.values()]}:{}),offlineAlerted:s.offlineAlerted}]));
  return {online,offline,snapshot};
 }
 
