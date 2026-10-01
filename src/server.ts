@@ -78,12 +78,14 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  const notifier=alerts&&createNotifier({url:alerts.webhookUrl,authEnv:alerts.authEnv,env,kinds:alerts.kinds,quietHours:alerts.quietHours,fetchImpl,...(sleep?{sleep}:{}),log});
  const stateFile=stateDir&&path.join(stateDir,'alert-state.json');
  const trackerOptions={offlineAfterMs:alerts?.offlineAfterMs??300000,...(alerts?{graceMs:alerts.graceMs,restartLoop:alerts.restartLoop}:{})};
- let tracker=createTracker(trackerOptions),saving=Promise.resolve(),activeLogReads=0;
+ let tracker=createTracker(trackerOptions),savedState='',saving=Promise.resolve(),activeLogReads=0;
  // Saved attention state keeps a restart from re-announcing items that were already notified.
  const ready=(async()=>{try{await history.load();if(stateFile){const saved:unknown=JSON.parse(await fs.readFile(stateFile,'utf8').catch(()=>'{}'));tracker=createTracker({...trackerOptions,state:saved&&typeof saved==='object'?saved as TrackerState:{}});}}catch{log('host-monitor: state unavailable; starting without history');}})();
  function record(events:AlertEvent[]) {
-  if(!events.length)return;for(const e of events)history.add(e);notifier?.submit(events,now());
-  if(stateFile){const data=JSON.stringify(tracker.snapshot());saving=saving.then(async()=>{await fs.writeFile(stateFile+'.tmp',data,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile);}).catch(()=>log('host-monitor: alert state not saved'));}
+  for(const e of events)history.add(e);if(events.length)notifier?.submit(events,now());
+  // A baseline item can clear without an event, so the state is saved whenever it changes.
+  const data=JSON.stringify(tracker.snapshot());if(data===savedState)return;savedState=data;
+  if(stateFile){saving=saving.then(async()=>{await fs.writeFile(stateFile+'.tmp',data,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile);}).catch(()=>log('host-monitor: alert state not saved'));}
  }
  const inflight=new Map<string,Promise<void>>(),timers=new Map<string,NodeJS.Timeout>();let stopped=false;
  async function execute(h:Host,file:string,args:string[]) {

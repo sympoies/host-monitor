@@ -158,8 +158,8 @@ test('automatic restarts counted by systemd alert as a restart loop even when no
  assert.deepEqual(t.online('c8',[],at(2),{[name]:8}),[]);assert.deepEqual(t.online('c8',[],at(4),{[name]:9}),[]);
  const loop=t.online('c8',[],at(6),{[name]:10});assert.deepEqual(types(loop),[['attention','service',name]]);assert.equal(loop[0].severity,'error');assert.equal(loop[0].detail,'restart loop · 3 restarts in 10 min');
  assert.deepEqual(t.online('c8',[],at(8),{[name]:11}),[],'further restarts extend the same incident');
- assert.deepEqual(t.online('c8',[],at(13),{[name]:11}),[],'still three restarts in the last 10 min');
- assert.deepEqual(types(t.online('c8',[],at(15),{[name]:11})),[['recovered','service',name]],'fewer than three restarts in the last 10 min');
+ assert.deepEqual(t.online('c8',[],at(17),{[name]:11}),[],'the incident stays open until a full window passes without a restart');
+ assert.deepEqual(types(t.online('c8',[],at(18),{[name]:11})),[['recovered','service',name]]);
 });
 test('a counter reset by a manual restart and the first counter seen are not restarts',()=>{
  const t=createTracker(),name='agent-console-speech.service';t.online('sympoies',[],T0,{[name]:40});
@@ -179,7 +179,8 @@ test('an item without a restart counter that keeps failing and recovering alerts
  for(const m of [1,3])assert.deepEqual([...t.online('sympoies',[probe],T0+m*60000),...t.online('sympoies',[],T0+m*60000+20000)],[]);
  const flap=t.online('sympoies',[probe],T0+5*60000);assert.deepEqual(types(flap),[['attention','probe','Agent Console speech']]);assert.equal(flap[0].detail,'flapping · 3 failures in 10 min');
  assert.deepEqual(t.online('sympoies',[],T0+5*60000+20000),[],'a flapping incident stays open while failures continue');
- assert.deepEqual(types(t.online('sympoies',[],T0+11*60000+20000)),[['recovered','probe','Agent Console speech']]);
+ assert.deepEqual(t.online('sympoies',[],T0+11*60000+20000),[]);
+ assert.deepEqual(types(t.online('sympoies',[],T0+15*60000)),[['recovered','probe','Agent Console speech']]);
 });
 test('items found on the first observation are a silent baseline that also recovers silently',()=>{
  const t=createTracker();assert.deepEqual(t.online('c8',[stopped],T0),[]);assert.deepEqual(t.online('c8',[stopped],T0+300000),[]);
@@ -206,4 +207,26 @@ test('the monitor applies the grace window, per-item overrides and systemd resta
  attention=[];restarts=3;await step(20);await monitor.idle();
  assert.deepEqual(calls.slice(1).map(c=>[c.body.title,c.body.body]),[['[host-monitor] c8: service needs attention','agent-console-c8-serve.service — restart loop · 3 restarts in 10 min'],['[host-monitor] c8: service recovered','web.service']]);
  monitor.stop();
+});
+test('a steady restart loop is one incident, not an alert and a recovery per restart',()=>{
+ const t=createTracker(),name='agent-console-c8-serve.service';let count=0;const events=[];t.online('c8',[],T0,{[name]:count});
+ for(let at=T0+20000;at<=T0+3600000;at+=20000){if((at-T0)%240000===0)count++;events.push(...t.online('c8',[],at,{[name]:count}));}
+ assert.deepEqual(events.map(e=>[e.type,e.at]),[['attention',new Date(T0+720000).toISOString()]]);
+});
+test('restart counters are a fresh baseline after a gap longer than the loop window',()=>{
+ const t=createTracker({offlineAfterMs:0}),name='agent-console-c8-serve.service';t.online('m4',[],T0,{[name]:1});
+ for(let m=1;m<=40;m++)t.offline('m4',T0+m*60000);
+ assert.deepEqual(t.online('m4',[],T0+41*60000,{[name]:4}),[],'three restarts spread over 40 min offline are not a loop');
+ assert.deepEqual(t.online('m4',[],T0+42*60000,{[name]:5}),[]);
+});
+test('a baseline item that clears is saved, so after a restart its return still alerts',async()=>{
+ const dir=await tmp();try{
+  let clock=T0,attention:Attention[]=[stopped];const {calls,fetchImpl}=recorder();
+  const config={hosts:[host],stateDir:dir,alerts:{webhookUrl:'http://127.0.0.1:8000/notify'}};
+  const options=()=>({now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
+  const first=createMonitor(config,options());await first.refresh();attention=[];clock+=20000;await first.refresh();await first.idle();first.stop();
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'alert-state.json'),'utf8')),{c8:{active:[],offlineAlerted:false}});
+  attention=[stopped];const second=createMonitor(config,options());await second.refresh();clock+=100000;await second.refresh();await second.idle();second.stop();
+  assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] c8: service needs attention']);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
