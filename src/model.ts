@@ -13,7 +13,7 @@ export interface AndroidBattery{level:number;health:string;temperature:number;st
 export interface AndroidSensor{name:string;temperature:number}
 /** Device state read over adb (fleet-infra decision 0003). `protection` is Samsung battery protection; null when the device has none. */
 export interface AndroidInfo{model?:string;release?:string;battery?:AndroidBattery;protection?:boolean|null;thermal?:{status:number;sensors:AndroidSensor[]}}
-export interface Snapshot{schemaVersion:number;host:string;collectedAt:string;platform?:string;resources?:'collected'|'external';hardware:Hardware;memory?:MemInfo;disks?:Disk[];services:Service[];failedUnits:FailedUnit[];containers:Container[];journalErrors:JournalEntry[];collectionIssues:string[];probes:Probe[];gpus?:Gpu[];android?:AndroidInfo;attention:Attention[]}
+export interface Snapshot{schemaVersion:number;host:string;collectedAt:string;platform?:string;resources?:'collected'|'external';agentless?:boolean;hardware:Hardware;memory?:MemInfo;disks?:Disk[];services:Service[];failedUnits:FailedUnit[];containers:Container[];journalErrors:JournalEntry[];collectionIssues:string[];probes:Probe[];gpus?:Gpu[];android?:AndroidInfo;attention:Attention[]}
 /** The fields attentionFor reads; tests pass partial snapshots. */
 export interface AttentionInput{collectionIssues?:string[];services?:Pick<Service,'name'|'scope'|'health'|'active'|'result'|'sub'>[];failedUnits?:FailedUnit[];containers?:Pick<Container,'name'|'health'|'state'>[];disks?:Pick<Disk,'mount'|'percent'>[];memory?:Pick<MemInfo,'available'|'total'>;probes?:Pick<Probe,'name'|'ok'|'status'>[];journalErrors?:Pick<JournalEntry,'unit'|'count'>[]}
 export interface UnitState{name:string;active?:string;result?:string;type?:string}

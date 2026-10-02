@@ -18,10 +18,12 @@ try{
   await page.locator('#hosts .host').filter({has:page.locator('.host-name',{hasText:new RegExp('^'+host+'$')})}).click();
   await page.waitForFunction((host:string)=>document.querySelector('#host-title')?.textContent===host&&document.querySelector('#resources .metric'),host);
   // Hosts whose resources are external (macOS, Beszel) show a pointer instead of metrics and disk rows.
-  const expected=resourceExpectation(await page.evaluate(async(host:string)=>(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((h:{name:string})=>h.name===host)?.snapshot,host));
+  const snapshot=await page.evaluate(async(host:string)=>(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((h:{name:string})=>h.name===host)?.snapshot,host);const expected=resourceExpectation(snapshot);
   assert.equal(await page.locator('#resources .metric').count(),expected.metrics);
   if(expected.diskRows)assert.ok(await page.locator('#disks .disk').count()>0);
   else{assert.ok((await page.locator('#resources').innerText()).includes(expected.text));assert.ok((await page.locator('#disks').innerText()).includes(expected.text));}
+  // An agentless host has no service inventory to filter, search, or tail.
+  if(expected.resources==='agentless'){await page.screenshot({path:out+'/'+host+'-desktop.png',fullPage:true});continue;}
   const inventory=await page.evaluate(async(host:string)=>{const s=(await (await fetch('/api/fleet',{cache:'no-store'})).json()).hosts.find((h:{name:string})=>h.name===host)?.snapshot;return s?s.services.length+(s.containers?.length??0):0;},host);
   await page.locator('#filter').selectOption('all');assert.ok(inventory>0);assert.equal(await page.locator('#services tr').count(),inventory);
   const sample=(await page.locator('#services tr td:first-child').first().evaluate((td:Element)=>td.firstChild?.textContent??'')).trim();

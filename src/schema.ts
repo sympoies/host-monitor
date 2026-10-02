@@ -16,7 +16,7 @@ const numericList=list(number,16);
 // here, and consumers must tolerate any other field being absent.
 export function projectSnapshot(value:unknown):Snapshot{
  const snapshot=object(value,{
-  schemaVersion:number,host:name,collectedAt:name,platform:name,resources:(value:unknown)=>value==='collected'||value==='external'?value:undefined,
+  schemaVersion:number,host:name,collectedAt:name,platform:name,resources:(value:unknown)=>value==='collected'||value==='external'?value:undefined,agentless:boolean,
   hardware:record({cpuCount:number,cpuModel:str,cpuBusy:number,load:numericList,uptime:number,kernel:name}),
   memory:(value:unknown)=>value===undefined?undefined:object(value,{total:number,available:number,used:number,swapTotal:number,swapUsed:number}),
   disks:list(record({source:str,type:name,total:number,used:number,available:number,percent:number,mount:str}),256),

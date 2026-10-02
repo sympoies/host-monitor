@@ -1,4 +1,5 @@
 import {projectSnapshot} from './schema.ts';
+import {AGENTLESS_SCRIPT,agentlessSnapshot} from './agentless.ts';
 import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
 import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,DEFAULT_ALERT_KINDS,DEFAULT_GRACE_MS,DEFAULT_RESTART_LOOP} from './alerts.ts';
 import type {AlertEvent,NotifierOptions,TrackerState} from './alerts.ts';
@@ -15,14 +16,14 @@ export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:
 // A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
 interface LogUnit{name:string;scope:'user'|'system'}
-export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
-export interface ServerConfig{hosts:HostEntry[];hostOrder?:unknown;beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
-interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;bestEffort?:unknown;backoffSeconds?:unknown;agentless?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
+export interface ServerConfig{hosts:HostEntry[];backoffSeconds?:unknown;hostOrder?:unknown;beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
+interface Host extends HostEntry{bestEffort:boolean;backoffMs:number[];importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
 // Disk capacity of a host whose resource metrics Beszel owns, read from the hub: `stale` is a record older than ten minutes,
 // `unavailable` a failed read, which keeps the last disks and times so the dashboard can say how old they are.
 interface BeszelState{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 const BESZEL_STALE_MS=10*60*1000;
-interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
+interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string;reachability?:{lastSeen:string|null;nextCheck:string;checks:number}}
 // systemd NRestarts counters by service name; a name present in both scopes adds both counters.
 function restartCounts(snapshot:Snapshot):Record<string,number> {
  const counts:Record<string,number>={};for(const s of snapshot.services)if(typeof s.restarts==='number'&&s.manager!=='launchd')counts[s.name]=(counts[s.name]??0)+s.restarts;return counts;
@@ -39,6 +40,12 @@ function logUnits(value:unknown=[]):LogUnit[]{
   !/^[A-Za-z0-9][A-Za-z0-9@._-]{0,126}\.service$/.test((v as LogUnit).name)))throw new Error('invalid-log-units');
  const units=value as LogUnit[];if(new Set(units.map(v=>v.name)).size!==units.length)throw new Error('invalid-log-units');
  return units.map(v=>({scope:v.scope,name:v.name}));
+}
+// Reachability checks of an unreachable best-effort host: 1, 2, 5, then every 15 minutes unless configured otherwise.
+const DEFAULT_BACKOFF=[60,120,300,900];
+function backoffMs(value:unknown):number[]{
+ if(!Array.isArray(value)||value.length<1||value.length>8||value.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<1||v>86400))throw new Error('invalid-backoff');
+ return value.map(v=>v*1000);
 }
 const seconds=(value:unknown,fallback:unknown,min:number,max:number)=>{const v=value??fallback;if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max)throw new Error('invalid-hosts');return v;};
 function beszelOptions(value:unknown) {
@@ -82,8 +89,13 @@ function alertOptions(value:unknown,hostNames:string[]) {
 export interface MonitorOptions{run?:Runner;now?:()=>number;fetch?:NotifierOptions['fetchImpl'];sleep?:NotifierOptions['sleep'];env?:Record<string,string|undefined>;log?:(message:string)=>void}
 export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),fetch:fetchImpl=fetch,sleep,env=process.env,log=message=>console.error(message)}:MonitorOptions={}) {
  const defaultRefresh=config.refreshSeconds??20;
- const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
+ const defaultBackoff=config.backoffSeconds===undefined?backoffMs(DEFAULT_BACKOFF):backoffMs(config.backoffSeconds);
+ const hosts:Host[]=config.hosts.map(h=>({...h,bestEffort:h.bestEffort===true,backoffMs:h.backoffSeconds===undefined?defaultBackoff:backoffMs(h.backoffSeconds),importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
  if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
+ // An agentless host is read over ssh with one fixed command: no collector, node, or config path, and no log units.
+ if(config.hosts.some(h=>h.agentless!==undefined&&(typeof h.agentless!=='boolean'||h.agentless&&(h.ssh===undefined||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh)||h.adb!==undefined||h.node!==undefined||h.collector!==undefined||h.config!==undefined||h.logUnits!==undefined))))throw new Error('invalid-hosts');
+ // Best-effort backoff applies to hosts reached over ssh with a collector, not to adb devices.
+ if(config.hosts.some(h=>h.bestEffort!==undefined&&(typeof h.bestEffort!=='boolean'||h.bestEffort&&(h.ssh===undefined||h.adb!==undefined||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh)))))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.beszelName!==undefined&&!hubSystemName(h.beszelName)))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.logUnits.length>0&&(h.ssh!==undefined||h.adb!==undefined)))throw new Error('invalid-log-units');
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
@@ -110,6 +122,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   const data=JSON.stringify(tracker.snapshot());if(data===savedState)return;savedState=data;
   if(stateFile){saving=saving.then(async()=>{await fs.writeFile(stateFile+'.tmp',data,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile);}).catch(()=>log('host-monitor: alert state not saved'));}
  }
+ const backoff=new Map<string,{step:number;nextCheckMs:number;checks:number}>();
  const inflight=new Map<string,Promise<void>>(),timers=new Map<string,NodeJS.Timeout>();let stopped=false;
  async function execute(h:Host,file:string,args:string[]) {
   const timeout=Math.ceil(h.timeoutSeconds*1000);let timer:NodeJS.Timeout|undefined;
@@ -128,6 +141,8 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    const bin=(adb.bin as string|undefined)??'adb';
    const output=remote?await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,bin,'-s',adb.serial,'shell',"'"+ADB_SCRIPT.replaceAll("'","'\\''")+"'"]):await execute(h,bin,['-s',adb.serial,'shell',ADB_SCRIPT]);
    snapshot=projectSnapshot(androidSnapshot(h.name,output,now()));
+  }else if(h.agentless===true){
+   snapshot=projectSnapshot(agentlessSnapshot(h.name,await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,AGENTLESS_SCRIPT]),now()));
   }else{
    const {node,collector,config}=h;
    // Remote arguments cross an ssh command line, so they are allowlisted; local paths only need to be present.
@@ -147,23 +162,39 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    beszel.set(h.name,{status:'ok',lastSuccess:new Date(at).toISOString(),recordedAt:read.recordedAt,disks:read.disks});}
   catch{beszel.set(h.name,{status:'unavailable',lastSuccess:previous?.lastSuccess??null,recordedAt:previous?.recordedAt??null,disks:previous?.disks??[]});}
  }
+// The probe runs `true` over the same ssh alias and options as a collection, with a short timeout, so it follows the host's
+// real transport; it starts no collector and reads nothing.
+ async function reachable(h:Host) {
+  if(!h.bestEffort)return true;
+  try{await run('ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,'true'],{timeout:10000,maxBuffer:4096,encoding:'utf8'});return true;}catch{return false;}
+ }
+ function bump(h:Host) {
+  const b=backoff.get(h.name)??{step:-1,nextCheckMs:0,checks:0};b.step=Math.min(b.step+1,h.backoffMs.length-1);b.nextCheckMs=now()+h.backoffMs[b.step];b.checks++;backoff.set(h.name,b);
+ }
+ const reach=(h:Host,old:HostState)=>({lastSeen:old.lastSuccess,nextCheck:new Date(backoff.get(h.name)!.nextCheckMs).toISOString(),checks:backoff.get(h.name)!.checks});
  function refreshHost(name:string):Promise<void> {
   const h=hosts.find(h=>h.name===name);if(!h)return Promise.reject(new Error('unknown-host'));
   const pending=inflight.get(name);if(pending)return pending;
   const attempt=(async()=>{await ready;const old=state.get(name)!,at=new Date(now()).toISOString();
+   // An unreachable best-effort host is only probed, on the backoff schedule, until a probe succeeds.
+   if(backoff.has(name)&&!await reachable(h)){bump(h);state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:reach(h,old)});notifier?.tick(now());return;}
+   backoff.delete(name);
    try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot)));
     if(hub&&snapshot.resources==='external')await readBeszel(h);}
-   catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
-    // A detached adb device is an expected state, like a sleeping laptop: it raises an offline alert only when its host
+   catch{
+    // A failed collection of a best-effort host is followed by one cheap probe: unreachable starts the backoff.
+    if(h.bestEffort&&!await reachable(h)){bump(h);state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:reach(h,old)});notifier?.tick(now());return;}
+    state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:undefined});
+    // A best-effort host (a laptop) being away is expected and never alerts. A detached adb device is an expected state, like a sleeping laptop: it raises an offline alert only when its host
     // entry sets its own offlineAfterSeconds, which catches a broken collection path that outlasts any unplugged spell.
-    if(h.adb===undefined||h.offlineAfterMs!==undefined)record(tracker.offline(name,now(),h.offlineAfterMs));}
+    if(!h.bestEffort&&(h.adb===undefined||h.offlineAfterMs!==undefined))record(tracker.offline(name,now(),h.offlineAfterMs));}
    notifier?.tick(now());
   })().finally(()=>inflight.delete(name));
   inflight.set(name,attempt);return attempt;
  }
  const refresh=async()=>{await Promise.all(hosts.map(h=>refreshHost(h.name)));};
  // Each host runs its own loop: the next collection is scheduled only after that host's previous one settles.
- function schedule(h:Host){if(stopped)return;void refreshHost(h.name).finally(()=>{if(!stopped)timers.set(h.name,setTimeout(()=>schedule(h),Math.max(5,h.refreshSeconds)*1000));});}
+ function schedule(h:Host){if(stopped)return;void refreshHost(h.name).finally(()=>{if(!stopped)timers.set(h.name,setTimeout(()=>schedule(h),Math.max(5000,backoff.has(h.name)?backoff.get(h.name)!.nextCheckMs-now():h.refreshSeconds*1000)));});}
  // A snapshot is stale after three missed refresh intervals of its host, or when it claims to be from the future.
  const stale=(h:HostState)=>!h.lastSuccess||!h.snapshot||now()-Date.parse(h.snapshot.collectedAt)>3*h.refreshSeconds*1000||Date.parse(h.snapshot.collectedAt)-now()>30000;
  async function handle(req:http.IncomingMessage,res:http.ServerResponse){res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
@@ -203,7 +234,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  }
  // A handler failure answers 500; it must never become an unhandled rejection that stops the server.
  const server=http.createServer((req,res)=>{handle(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
- return {server,refresh,refreshHost,start:()=>{stopped=false;for(const h of hosts)schedule(h);},stop:()=>{stopped=true;for(const t of timers.values())clearTimeout(t);timers.clear();},
+ return {server,refresh,refreshHost,reachability:(name:string)=>backoff.get(name),start:()=>{stopped=false;for(const h of hosts)schedule(h);},stop:()=>{stopped=true;for(const t of timers.values())clearTimeout(t);timers.clear();},
   idle:async()=>{await Promise.all([...inflight.values()]);await notifier?.idle();await history.flush();await saving;}};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(await fs.realpath(process.argv[1]).catch(()=>process.argv[1])).href){const at=process.argv.indexOf('--config'),file=at<0?undefined:process.argv[at+1];if(!file){console.error('usage: node src/server.ts --config <server-config.json>');process.exit(64);}const config=JSON.parse(await fs.readFile(file,'utf8')) as ServerConfig;const monitor=createMonitor(config);monitor.server.listen(config.port??9105,'127.0.0.1',()=>{monitor.start();console.log('host-monitor listening on loopback');});for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{monitor.stop();monitor.server.close(()=>process.exit(0));});}
