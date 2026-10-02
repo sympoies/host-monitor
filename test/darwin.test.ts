@@ -75,19 +75,19 @@ test('log errors are counted per required job process and message text never lea
  assert.deepEqual(await launchdLogErrors([],{uid:501,stream:async()=>assert.fail('no query without targets')}),[]);
 });
 test('host identity compares short hostnames case-insensitively or an explicit identity',()=>{
- assert.equal(hostIdentityMatches('m4.local',{name:'m4'}),true);
- assert.equal(hostIdentityMatches('M4.LOCAL',{name:'m4'}),true);
- assert.equal(hostIdentityMatches('c8',{name:'c8'}),true);
- assert.equal(hostIdentityMatches('MacBook',{name:'m4'}),false);
- assert.equal(hostIdentityMatches('MacBook.local',{name:'m4',identity:'MacBook'}),true);
- assert.equal(hostIdentityMatches('m4',{name:'m4',identity:'MacBook'}),false);
- assert.equal(hostIdentityMatches('c8.example.com',{name:'c8'}),false);
+ assert.equal(hostIdentityMatches('collector-b.local',{name:'collector-b'}),true);
+ assert.equal(hostIdentityMatches('COLLECTOR-B.LOCAL',{name:'collector-b'}),true);
+ assert.equal(hostIdentityMatches('collector-a',{name:'collector-a'}),true);
+ assert.equal(hostIdentityMatches('MacBook',{name:'collector-b'}),false);
+ assert.equal(hostIdentityMatches('MacBook.local',{name:'collector-b',identity:'MacBook'}),true);
+ assert.equal(hostIdentityMatches('collector-b',{name:'collector-b',identity:'MacBook'}),false);
+ assert.equal(hostIdentityMatches('collector-a.example.com',{name:'collector-a'}),false);
 });
 test('a macOS snapshot reports launchd services, log counts and external resources without collection failures',async()=>{
  const {run,calls}=launchctl();const stream=async(_bin:string,_args:string[],onLine:(line:string)=>void)=>{for(const line of fixture('log-show-errors.ndjson').split('\n'))onLine(line);};
- const config={name:'m4',identity:'MacBook',required:{user:['com.example.tunnel','com.example.broken'],system:['org.example.daemon']}};
+ const config={name:'collector-b',identity:'MacBook',required:{user:['com.example.tunnel','com.example.broken'],system:['org.example.daemon']}};
  const s=await collect(config,{platform:'darwin',hostname:'MacBook.local',uid:501,run,stream});
- assert.equal(s.schemaVersion,1);assert.equal(s.host,'m4');assert.equal(s.platform,'darwin');assert.equal(s.resources,'external');
+ assert.equal(s.schemaVersion,1);assert.equal(s.host,'collector-b');assert.equal(s.platform,'darwin');assert.equal(s.resources,'external');
  assert.deepEqual(s.collectionIssues,[]);assert.equal(s.memory,undefined);assert.equal(s.disks,undefined);assert.deepEqual(s.failedUnits,[]);
  assert.ok(calls.every(c=>c.startsWith('launchctl print ')));
  assert.deepEqual(s.attention.map(a=>[a.kind,a.title]),[['service','com.example.broken'],['journal','com.example.tunnel'],['journal','org.example.daemon']]);

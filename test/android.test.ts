@@ -1,10 +1,10 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import {ADB_SCRIPT,adbSections,androidSnapshot,androidAttention} from '../src/android.ts';
 import {projectSnapshot} from '../src/schema.ts';
-// Recorded from a USB-attached Samsung Galaxy S22 (Android 16) with ADB_SCRIPT; battery dates and charge counters are replaced.
+// Recorded from a USB-attached Android 16 test device with ADB_SCRIPT; battery dates and charge counters are replaced.
 const fixture=fs.readFileSync(path.join(import.meta.dirname,'fixtures/android/adb-shell.txt'),'utf8');
 const at=Date.parse('2026-09-29T00:00:00Z');
-const snap=(text=fixture)=>androidSnapshot('s22',text,at);
+const snap=(text=fixture)=>androidSnapshot('phone-a',text,at);
 const kinds=(text:string)=>snap(text).attention.map(a=>[a.kind,a.title,a.severity]);
 
 test('one adb shell script reads every section read-only and ends with a completion marker',()=>{
@@ -14,7 +14,7 @@ test('one adb shell script reads every section read-only and ends with a complet
 });
 test('the recorded device output becomes a host snapshot with battery, protection, thermal, memory, and /data',()=>{
  const s=snap();
- assert.equal(s.host,'s22');assert.equal(s.platform,'android');assert.equal(s.resources,'collected');assert.equal(s.collectedAt,new Date(at).toISOString());
+ assert.equal(s.host,'phone-a');assert.equal(s.platform,'android');assert.equal(s.resources,'collected');assert.equal(s.collectedAt,new Date(at).toISOString());
  assert.deepEqual(s.android?.battery,{level:84,health:'good',temperature:31.9,status:'not-charging',power:'usb'});
  assert.equal(s.android?.protection,true);
  assert.equal(s.android?.thermal?.status,0);
