@@ -9,6 +9,9 @@ test('a host that collects its own resources expects four metrics and disk rows'
 test('an external-resource host expects the Beszel pointer: two metrics and a disk note',()=>{
  assert.deepEqual(resourceExpectation(snapshot('mac-a')),{resources:'external',metrics:2,diskRows:false,text:EXTERNAL_RESOURCE_TEXT});
 });
+test('an agentless host expects its own pointer and no service inventory',()=>{
+ assert.deepEqual(resourceExpectation({resources:'external',agentless:true}),{resources:'agentless',metrics:2,diskRows:false,text:'僅 ssh 基本資訊'});
+});
 test('a snapshot without the optional resources field is treated as collected, like the dashboard',()=>{
  assert.equal(resourceExpectation(snapshot('linux-legacy')).resources,'collected');
 });

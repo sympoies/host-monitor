@@ -1,4 +1,5 @@
 import {projectSnapshot} from './schema.ts';
+import {AGENTLESS_SCRIPT,agentlessSnapshot} from './agentless.ts';
 import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
 import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,DEFAULT_ALERT_KINDS,DEFAULT_GRACE_MS,DEFAULT_RESTART_LOOP} from './alerts.ts';
 import type {AlertEvent,NotifierOptions,TrackerState} from './alerts.ts';
@@ -15,7 +16,7 @@ export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:
 // A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
 interface LogUnit{name:string;scope:'user'|'system'}
-export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;bestEffort?:unknown;backoffSeconds?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;bestEffort?:unknown;backoffSeconds?:unknown;agentless?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
 export interface ServerConfig{hosts:HostEntry[];backoffSeconds?:unknown;hostOrder?:unknown;beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
 interface Host extends HostEntry{bestEffort:boolean;backoffMs:number[];importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
 // Disk capacity of a host whose resource metrics Beszel owns, read from the hub: `stale` is a record older than ten minutes,
@@ -91,8 +92,10 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  const defaultBackoff=config.backoffSeconds===undefined?backoffMs(DEFAULT_BACKOFF):backoffMs(config.backoffSeconds);
  const hosts:Host[]=config.hosts.map(h=>({...h,bestEffort:h.bestEffort===true,backoffMs:h.backoffSeconds===undefined?defaultBackoff:backoffMs(h.backoffSeconds),importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
  if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
+ // An agentless host is read over ssh with one fixed command: no collector, node, or config path, and no log units.
+ if(config.hosts.some(h=>h.agentless!==undefined&&(typeof h.agentless!=='boolean'||h.agentless&&(h.ssh===undefined||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh)||h.adb!==undefined||h.node!==undefined||h.collector!==undefined||h.config!==undefined||h.logUnits!==undefined))))throw new Error('invalid-hosts');
  // Best-effort backoff applies to hosts reached over ssh with a collector, not to adb devices.
- if(config.hosts.some(h=>h.bestEffort!==undefined&&(typeof h.bestEffort!=='boolean'||h.bestEffort&&(h.ssh===undefined||h.adb!==undefined))))throw new Error('invalid-hosts');
+ if(config.hosts.some(h=>h.bestEffort!==undefined&&(typeof h.bestEffort!=='boolean'||h.bestEffort&&(h.ssh===undefined||h.adb!==undefined||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh)))))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.beszelName!==undefined&&!hubSystemName(h.beszelName)))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.logUnits.length>0&&(h.ssh!==undefined||h.adb!==undefined)))throw new Error('invalid-log-units');
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
@@ -138,6 +141,8 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    const bin=(adb.bin as string|undefined)??'adb';
    const output=remote?await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,bin,'-s',adb.serial,'shell',"'"+ADB_SCRIPT.replaceAll("'","'\\''")+"'"]):await execute(h,bin,['-s',adb.serial,'shell',ADB_SCRIPT]);
    snapshot=projectSnapshot(androidSnapshot(h.name,output,now()));
+  }else if(h.agentless===true){
+   snapshot=projectSnapshot(agentlessSnapshot(h.name,await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,AGENTLESS_SCRIPT]),now()));
   }else{
    const {node,collector,config}=h;
    // Remote arguments cross an ssh command line, so they are allowlisted; local paths only need to be present.
@@ -179,7 +184,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    catch{
     // A failed collection of a best-effort host is followed by one cheap probe: unreachable starts the backoff.
     if(h.bestEffort&&!await reachable(h)){bump(h);state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:reach(h,old)});notifier?.tick(now());return;}
-    state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
+    state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:undefined});
     // A best-effort host (a laptop) being away is expected and never alerts. A detached adb device is an expected state, like a sleeping laptop: it raises an offline alert only when its host
     // entry sets its own offlineAfterSeconds, which catches a broken collection path that outlasts any unplugged spell.
     if(!h.bestEffort&&(h.adb===undefined||h.offlineAfterMs!==undefined))record(tracker.offline(name,now(),h.offlineAfterMs));}

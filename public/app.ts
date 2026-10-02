@@ -4,7 +4,7 @@ interface Attention{severity:string;kind:string;title:string;detail?:string}
 interface Service{name:string;scope:string;health:string;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;required?:boolean}
 interface Container{name:string;image?:string;state?:string;status?:string;health?:string}
 interface Disk{source:string;type:string;total:number;used:number;available:number;percent:number;mount:string}
-interface Snapshot{platform?:string;resources?:string;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
+interface Snapshot{platform?:string;resources?:string;agentless?:boolean;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
 interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 interface Reachability{lastSeen:string|null;nextCheck:string;checks:number}
@@ -30,7 +30,7 @@ const batteryHealth:Record<string,string>={good:'良好',overheat:'過熱',dead:
 const powerLabel:Record<string,string>={ac:'AC 供電',usb:'USB 供電',wireless:'無線充電',dock:'底座供電',none:'未接電源'};
 const thermalLabel=['正常','輕微','中等','嚴重','危急','緊急','關機'];
 const celsius=(n:number)=>n.toFixed(1)+'°C';
-function hostSummary(s:Snapshot){if(externalResources(s))return '資源指標：Beszel';if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;}
+function hostSummary(s:Snapshot){if(s.agentless)return '僅 ssh 基本資訊';if(externalResources(s))return '資源指標：Beszel';if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;}
 function important(s:Row,markers:string[]=[]){return s.required||markers.some(m=>s.name.includes(m))||s.health==='error';}
 function closeLog(){logRequest++;openedLog=undefined;$('log-panel').hidden=true;$('log-body').textContent='';}
 async function openLog(host:string,unit:string){
@@ -85,7 +85,8 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
  for(const a of s.attention){const notice=el('div',a.title,'notice '+a.severity);if(a.detail)notice.append(el('span',a.detail));$('attention').append(notice);}if(!s.attention.length)$('attention').append(el('div',h.status==='online'&&!h.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(h.status==='online'&&!h.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
  const uptime=`${Math.floor(s.hardware.uptime/86400)} 天 ${Math.floor(s.hardware.uptime%86400/3600)} 小時`;
- if(externalResources(s)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','此主機的磁碟容量由 Beszel 監控','check'));
+ if(s.agentless){metric('資源指標','未安裝 collector','此主機只以 ssh 讀取基本資訊，不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));}
+ else if(externalResources(s)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','此主機的磁碟容量由 Beszel 監控','check'));
   // The server reads the latest Beszel stats; a failed read keeps the last disks and says when they were read.
   const bz=h.beszel;if(bz){const note=el('div',bz.status==='ok'?'磁碟容量來自 Beszel':bz.status==='stale'?'Beszel 資料已過期':'Beszel 暫時讀不到','check');
    if(bz.status!=='ok')note.append(pill(bz.status==='stale'?'已過期':'讀取失敗','warning'));

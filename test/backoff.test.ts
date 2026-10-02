@@ -41,3 +41,14 @@ test('backoff configuration is validated and per-host settings override the serv
  assert.throws(()=>createMonitor({hosts:[{name:'x',node:'/n',collector:'/c',config:'/h',bestEffort:true}]} as any),/invalid-hosts/);
  const w=world(),m=make(w,{backoffSeconds:[30,90]},{backoffSeconds:[10]});return m.refreshHost('lap').then(()=>{assert.equal(m.reachability('lap')!.nextCheckMs-w.clock,10000);m.stop();});
 });
+test('a host that is reachable again but whose collector fails stops showing the old backoff',async()=>{
+ const w=world();
+ const fixed=createMonitor({hosts:[entry]} as any,{now:()=>w.clock,run:async(_f,args)=>{if(args.at(-1)==='true'){if(!w.up)throw Error('down');return {stdout:''};}throw Error('collector broken');}});
+ await fixed.refreshHost('lap');assert.ok(fixed.reachability('lap'),'probe failed first: backoff');
+ w.up=true;w.clock+=60000;await fixed.refreshHost('lap');assert.equal(fixed.reachability('lap'),undefined);
+ fixed.server.listen(0,'127.0.0.1');await new Promise(r=>fixed.server.once('listening',r));
+ try{const host=(await (await fetch('http://127.0.0.1:'+(fixed.server.address() as any).port+'/api/fleet')).json() as any).hosts[0];assert.equal(host.status,'offline');assert.equal(host.reachability,undefined);}finally{fixed.stop();fixed.server.close();}
+});
+test('a best-effort ssh alias must be a plain alias',()=>{
+ assert.throws(()=>createMonitor({hosts:[{...entry,ssh:'-oProxyCommand=x'}]} as any),/invalid-hosts/);
+});
