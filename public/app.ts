@@ -5,7 +5,8 @@ interface Container{name:string;image?:string;state?:string;status?:string;healt
 interface Disk{source:string;type:string;total:number;used:number;available:number;percent:number;mount:string}
 interface Snapshot{platform?:string;resources?:string;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
-interface HostView{name:string;status:string;stale:boolean;importantServices?:string[];logUnits?:{name:string;scope:string}[];snapshot:Snapshot|null;lastSuccess:string|null}
+interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
+interface HostView{name:string;status:string;stale:boolean;beszel?:BeszelView;importantServices?:string[];logUnits?:{name:string;scope:string}[];snapshot:Snapshot|null;lastSuccess:string|null}
 interface Fleet{serverTime:string;refreshSeconds:number;hosts:HostView[]}
 interface HostEvent{at:string;host:string;type:string;kind:string;title:string;severity:string;detail?:string}
 interface Row{name:string;scope?:string;description?:string;health:string;source:string;details?:string;required?:boolean;active?:string;state?:string}
@@ -60,7 +61,11 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
  for(const a of s.attention){const notice=el('div',a.title,'notice '+a.severity);if(a.detail)notice.append(el('span',a.detail));$('attention').append(notice);}if(!s.attention.length)$('attention').append(el('div',h.status==='online'&&!h.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(h.status==='online'&&!h.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
  const uptime=`${Math.floor(s.hardware.uptime/86400)} 天 ${Math.floor(s.hardware.uptime%86400/3600)} 小時`;
- if(externalResources(s)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','此主機的磁碟容量由 Beszel 監控','check'));}
+ if(externalResources(s)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','此主機的磁碟容量由 Beszel 監控','check'));
+  // The server reads the latest Beszel stats; a failed read keeps the last disks and says when they were read.
+  const bz=h.beszel;if(bz){const note=el('div',bz.status==='ok'?'磁碟容量來自 Beszel':bz.status==='stale'?'Beszel 資料已過期':'Beszel 暫時讀不到','check');
+   if(bz.status!=='ok')note.append(pill(bz.status==='stale'?'已過期':'讀取失敗','warning'));
+   note.append(el('small',bz.status==='unavailable'?(bz.lastSuccess?`最後成功 ${time(bz.lastSuccess)}${bz.disks.length?'，下列為當時資料':''}`:'尚未成功讀取'):`資料時間 ${time(bz.recordedAt)}`));$('disks').replaceChildren(note);}}
  else if(isAndroid(s)){const b=s.android?.battery,t=s.android?.thermal,protection=s.android?.protection,mem=s.memory,mp=mem?mem.used/mem.total*100:undefined,data=s.disks?.find(d=>d.mount==='/data');
  metric('電池電量',b?b.level+'%':'無資料',b?`健康 ${batteryHealth[b.health]??b.health} · ${powerLabel[b.power]??b.power} · 電池保護 ${protection==null?'無資料':protection?'開啟':'關閉'}`:'採集無法確認');
  metric('電池溫度',b?celsius(b.temperature):'無資料',t?[`熱狀態 ${thermalLabel[t.status]??t.status}`,...t.sensors.map(x=>`${x.name} ${celsius(x.temperature)}`)].join(' · '):'熱感測無法確認');
@@ -72,7 +77,7 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
  const disk=s.disks?.find(d=>d.mount==='/');metric('系統磁碟',disk?disk.percent+'%':'無資料',disk?`使用 ${bytes(disk.used)} · 可用 ${bytes(disk.available)}`:'採集無法確認',disk?.percent);
  const gpu=s.gpus?.[0];metric(gpu?'GPU 使用率':'主機運作時間',gpu?percent(gpu.busy):Math.floor(s.hardware.uptime/86400)+' 天',gpu?`${gpu.name} · ${gpu.temperature}°C · ${bytes(gpu.memoryUsed)} / ${bytes(gpu.memoryTotal)}`:`${Math.floor(s.hardware.uptime%86400/3600)} 小時 · 核心 ${s.hardware.kernel}`,gpu?.busy);
  }
- for(const d of s.disks??[]){const row=el('div',undefined,'disk'),name=el('div',d.mount);name.append(el('small',[d.source,d.type].filter(Boolean).join(' · ')));const usage=el('div',d.percent+'%');usage.append(bar(d.percent));const remaining=el('div',`可用 ${bytes(d.available)}`,'disk-space');remaining.append(el('small',`使用 ${bytes(d.used)} / ${bytes(d.total)}`));row.append(name,usage,remaining);$('disks').append(row);}
+ for(const d of (externalResources(s)?h.beszel?.disks:s.disks)??[]){const row=el('div',undefined,'disk'),name=el('div',d.mount);name.append(el('small',[d.source,d.type].filter(Boolean).join(' · ')));const usage=el('div',d.percent+'%');usage.append(bar(d.percent));const remaining=el('div',`可用 ${bytes(d.available)}`,'disk-space');remaining.append(el('small',`使用 ${bytes(d.used)} / ${bytes(d.total)}`));row.append(name,usage,remaining);$('disks').append(row);}
  for(const p of s.probes??[]){const div=el('div',p.name,'check');div.append(pill(p.ok?'通過':'異常',p.ok?'ok':'error'),el('small',p.status?`HTTP ${p.status}`:'無法連線'));$('checks').append(div);}for(const j of s.journalErrors??[]){const div=el('div',j.unit,'check');div.append(pill(j.count+' 個錯誤','warning'),el('small',`${j.scope}${j.process?' · '+j.process:''} · 最近 ${time(j.lastAt)}`));$('checks').append(div);}if(!s.journalErrors?.length)$('checks').append(el('div',s.platform==='darwin'?'近一小時沒有採集到必要 launchd 工作的 error 紀錄':isAndroid(s)?'Android 裝置透過 adb 採集，不讀取系統記錄':'近一小時沒有採集到 error 等級的 journal 紀錄','check'));
  rows();
 }
