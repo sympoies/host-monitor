@@ -13,9 +13,9 @@ export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:
 // A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
 interface LogUnit{name:string;scope:'user'|'system'}
-export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown}
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
 export interface ServerConfig{hosts:HostEntry[];port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
-interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number}
+interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
 interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
 // systemd NRestarts counters by service name; a name present in both scopes adds both counters.
 function restartCounts(snapshot:Snapshot):Record<string,number> {
@@ -67,7 +67,7 @@ function alertOptions(value:unknown,hostNames:string[]) {
 export interface MonitorOptions{run?:Runner;now?:()=>number;fetch?:NotifierOptions['fetchImpl'];sleep?:NotifierOptions['sleep'];env?:Record<string,string|undefined>;log?:(message:string)=>void}
 export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),fetch:fetchImpl=fetch,sleep,env=process.env,log=message=>console.error(message)}:MonitorOptions={}) {
  const defaultRefresh=config.refreshSeconds??20;
- const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600)}));
+ const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
  if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.logUnits.length>0&&(h.ssh!==undefined||h.adb!==undefined)))throw new Error('invalid-log-units');
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
@@ -97,8 +97,14 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   let snapshot:Snapshot;
   if(h.adb!==undefined){
    const adb=h.adb as {serial?:unknown;bin?:unknown}|null;
-   if(h.ssh!==undefined||!adb||typeof adb!=='object'||!adbSerial(adb.serial)||adb.bin!==undefined&&!adbBinary(adb.bin))throw new Error('invalid-adb-command');
-   snapshot=projectSnapshot(androidSnapshot(h.name,await execute(h,(adb.bin as string|undefined)??'adb',['-s',adb.serial,'shell',ADB_SCRIPT]),now()));
+   // On another host the adb call crosses an ssh command line: the alias is allowlisted, adb must be an absolute path
+   // (a non-interactive remote shell has a minimal PATH), and the script is passed as one single-quoted word.
+   const remote=h.ssh!==undefined;
+   if(!adb||typeof adb!=='object'||!adbSerial(adb.serial)||adb.bin!==undefined&&!adbBinary(adb.bin)||
+    remote&&(!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(h.ssh!)||typeof adb.bin!=='string'||!adb.bin.startsWith('/')))throw new Error('invalid-adb-command');
+   const bin=(adb.bin as string|undefined)??'adb';
+   const output=remote?await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,bin,'-s',adb.serial,'shell',"'"+ADB_SCRIPT.replaceAll("'","'\\''")+"'"]):await execute(h,bin,['-s',adb.serial,'shell',ADB_SCRIPT]);
+   snapshot=projectSnapshot(androidSnapshot(h.name,output,now()));
   }else{
    const {node,collector,config}=h;
    // Remote arguments cross an ssh command line, so they are allowlisted; local paths only need to be present.
@@ -115,8 +121,9 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   const attempt=(async()=>{await ready;const old=state.get(name)!,at=new Date(now()).toISOString();
    try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot)));}
    catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
-    // A detached adb device is an expected state, like a sleeping laptop: it shows offline but never raises an offline alert.
-    if(h.adb===undefined)record(tracker.offline(name,now()));}
+    // A detached adb device is an expected state, like a sleeping laptop: it raises an offline alert only when its host
+    // entry sets its own offlineAfterSeconds, which catches a broken collection path that outlasts any unplugged spell.
+    if(h.adb===undefined||h.offlineAfterMs!==undefined)record(tracker.offline(name,now(),h.offlineAfterMs));}
    notifier?.tick(now());
   })().finally(()=>inflight.delete(name));
   inflight.set(name,attempt);return attempt;

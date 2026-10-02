@@ -94,9 +94,9 @@ export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GR
   }
   return events;
  }
- function offline(host:string,at:number):AlertEvent[] {
+ function offline(host:string,at:number,afterMs:number=offlineAfterMs):AlertEvent[] {
   const s=get(host);const since=s.offlineSince??=at;
-  if(s.offlineAlerted||!(offlineAfterMs>0)||at-since<offlineAfterMs)return [];
+  if(s.offlineAlerted||!(afterMs>0)||at-since<afterMs)return [];
   s.offlineAlerted=true;return [event(at,host,'offline',{kind:'host',title:host,severity:'error',detail:`no successful collection for ${Math.round((at-since)/60000)} min`})];
  }
  const snapshot=():TrackerState=>Object.fromEntries([...hosts].filter(([,s])=>s.known).map(([name,s])=>[name,{active:[...s.alerted.values()],...(s.baseline.size?{baseline:[...s.baseline.values()]}:{}),offlineAlerted:s.offlineAlerted}]));
