@@ -68,6 +68,25 @@ test('a system the hub does not know and missing credentials are unavailable, no
 test('a hub record older than the staleness limit is reported stale', async()=>{
  await running(hub({age:11*60*1000}),'external',async(m,fleet)=>{await m.refresh();const host=(await fleet()).hosts[0];assert.equal(host.beszel.status,'stale');assert.equal(host.beszel.disks.length,5);});
 });
+test('an ok reading turns stale as it ages, without another hub read', async()=>{
+ let clock=at;const h=hub(),monitor=createMonitor({hosts:[mac],beszel},{now:()=>clock,env,fetch:h.fetchImpl as any,run:async()=>({stdout:JSON.stringify(snapshot('external'))})});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');const base='http://127.0.0.1:'+(monitor.server.address() as net.AddressInfo).port;
+ try{await monitor.refresh();const read=async()=>(await (await fetch(base+'/api/fleet')).json() as any).hosts[0].beszel.status;
+  assert.equal(await read(),'ok');clock+=11*60*1000;assert.equal(await read(),'stale');}
+ finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('a system recreated in the hub is found again under its new id', async()=>{
+ const h=hub();let id='sys1';const inner=h.fetchImpl;
+ const fetchImpl=async(url:URL|string,init:RequestInit={})=>{const u=new URL(String(url));
+  if(u.pathname==='/api/collections/systems/records')return new Response(JSON.stringify({items:[{id,name:'Mac-A'}]}),{status:200});
+  if(u.pathname==='/api/collections/system_stats/records'&&!String(u.searchParams.get('filter')).includes(id))return new Response(JSON.stringify({items:[]}),{status:200});
+  return inner(url,init);};
+ const monitor=createMonitor({hosts:[mac],beszel},{now:()=>at,env,fetch:fetchImpl as any,run:async()=>({stdout:JSON.stringify(snapshot('external'))})});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');const base='http://127.0.0.1:'+(monitor.server.address() as net.AddressInfo).port;
+ try{const status=async()=>(await (await fetch(base+'/api/fleet')).json() as any).hosts[0].beszel.status;
+  await monitor.refresh();assert.equal(await status(),'ok');id='sys2';await monitor.refresh();assert.equal(await status(),'unavailable');await monitor.refresh();assert.equal(await status(),'ok');}
+ finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
 test('the Beszel system name can differ from the host name',async()=>{
  const h=hub({known:['Hub Name']});await running(h,'external',async(m,fleet)=>{await m.refresh();assert.equal((await fleet()).hosts[0].beszel.status,'ok');},{hosts:[{...mac,beszelName:'Hub Name'}]});
 });

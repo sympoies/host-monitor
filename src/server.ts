@@ -135,10 +135,12 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   return snapshot;
  }
  // A hub failure never changes the host's own status: the card says Beszel is unavailable and keeps the last disks.
+ // A reading ages while the hub is not read again, so staleness is decided when the fleet is served.
+ const beszelView=(b:BeszelState):BeszelState=>b.status==='ok'&&b.recordedAt&&now()-Date.parse(b.recordedAt)>BESZEL_STALE_MS?{...b,status:'stale'}:b;
  async function readBeszel(h:Host) {
   const previous=beszel.get(h.name);
   try{const read=await hub!.read(typeof h.beszelName==='string'?h.beszelName:h.name),at=now();
-   beszel.set(h.name,{status:at-Date.parse(read.recordedAt)>BESZEL_STALE_MS?'stale':'ok',lastSuccess:new Date(at).toISOString(),recordedAt:read.recordedAt,disks:read.disks});}
+   beszel.set(h.name,{status:'ok',lastSuccess:new Date(at).toISOString(),recordedAt:read.recordedAt,disks:read.disks});}
   catch{beszel.set(h.name,{status:'unavailable',lastSuccess:previous?.lastSuccess??null,recordedAt:previous?.recordedAt??null,disks:previous?.disks??[]});}
  }
  function refreshHost(name:string):Promise<void> {
@@ -164,7 +166,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(!['GET','HEAD'].includes(req.method??'')){res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;}
   let url:URL,body:string|Buffer,type:string;try{url=new URL(req.url??'','http://localhost');}catch{res.writeHead(400);res.end();return;}
   if(url.pathname==='/healthz'){body=JSON.stringify({ok:true,service:'host-monitor'});type='application/json';}
-  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,hosts:[...state.values()].map(h=>({...h,stale:stale(h),...(beszel.has(h.name)?{beszel:beszel.get(h.name)}:{})}))});type='application/json';}
+  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,hosts:[...state.values()].map(h=>({...h,stale:stale(h),...(beszel.has(h.name)?{beszel:beszelView(beszel.get(h.name)!)}:{})}))});type='application/json';}
   else if(url.pathname==='/api/events'){
    const limit=url.searchParams.has('limit')?Number(url.searchParams.get('limit')):100,host=url.searchParams.get('host')??undefined;
    if(!Number.isInteger(limit)||limit<1||limit>500||host!==undefined&&!state.has(host)){res.writeHead(400);res.end();return;}

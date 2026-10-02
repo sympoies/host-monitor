@@ -51,11 +51,15 @@ export function createBeszelHub({url,email,password,fetchImpl=fetch as HubFetch,
  }
  return {async read(system:string):Promise<HubDisks> {
   const id=await systemId(system);
+  // A system deleted and re-added in the hub gets a new id, so a failed read looks the name up again next time.
+  try{return await readStats(id);}catch(error){ids.delete(system);throw error;}
+ }};
+ async function readStats(id:string):Promise<HubDisks> {
   const items=(await get('/api/collections/system_stats/records'+query({filter:`system='${id}'&&type='1m'`,sort:'-created',perPage:'1',fields:'created,stats'}))).items;
   const record=Array.isArray(items)?items[0] as {created?:unknown;stats?:unknown}|undefined:undefined;
   const at=typeof record?.created==='string'?Date.parse(record.created.replace(' ','T')):NaN;
   const disks=parseBeszelStats(record?.stats);
   if(!Number.isFinite(at)||!disks.length)throw new Error('beszel-no-stats');
   return {recordedAt:new Date(at).toISOString(),disks};
- }};
+ }
 }
