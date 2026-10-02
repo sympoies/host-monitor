@@ -4,3 +4,4 @@ node_modules/
 coverage/
 # Emitted from public/app.ts by `npm run build`; the artifact build emits its own copy.
 public/app.js
+public/order.js

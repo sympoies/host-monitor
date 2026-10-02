@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import {createHash} from 'node:crypto';import {fileURLToPath} from 'node:url';import {createRequire} from 'node:module';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');const output=process.argv[2];if(!output)throw Error('output directory required');
-const files=['package.json','README.md','DEVELOPMENT.md','AGENTS.md','src/model.ts','src/schema.ts','src/alerts.ts','src/android.ts','src/beszel.ts','src/collector.ts','src/server.ts','public/index.html','public/app.js','public/style.css'];
+const files=['package.json','README.md','DEVELOPMENT.md','AGENTS.md','src/model.ts','src/schema.ts','src/alerts.ts','src/android.ts','src/beszel.ts','src/collector.ts','src/server.ts','public/index.html','public/app.js','public/order.js','public/style.css'];
 // public/app.js is emitted from public/app.ts by tsc (a devDependency) into a scratch directory, never read from the checkout,
 // so a stale local build cannot enter the artifact. Every other file is copied from the checkout.
-const emitted=new Set(['public/app.js']);
+const emitted=new Set(['public/app.js','public/order.js']);
 const {version}=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8'));if(typeof version!=='string'||!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version))throw Error('package.json version must be semantic');
 const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'host-monitor-emit-'));
 try{
