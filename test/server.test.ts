@@ -3,6 +3,7 @@ type Monitor=ReturnType<typeof createMonitor>;const port=(s:net.Server)=>(s.addr
 const host={name:'c8',ssh:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
 const snapshot={schemaVersion:1,host:'c8',collectedAt:'2026-09-27T00:00:00Z',services:[],attention:[],hardware:{cpuCount:8,load:[0,0,0],uptime:10,kernel:'Linux'}};
 async function running(run:Runner,fn:(m:Monitor,base:string)=>Promise<void>){const monitor=createMonitor({hosts:[host]},{run});monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await fn(monitor,'http://127.0.0.1:'+port(monitor.server));}finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}}
+const adbOutput=(await import('node:fs')).readFileSync(new URL('./fixtures/android/adb-shell.txt',import.meta.url),'utf8');const {ADB_SCRIPT}=await import('../src/android.ts');
 test('offline collectors retain the old snapshot without claiming fresh or healthy data',async()=>{let fail=false;await running(async()=>{if(fail)throw Error('private diagnostic');return {stdout:JSON.stringify(snapshot)};},async(m,base)=>{
  await m.refresh();let j=await (await fetch(base+'/api/fleet')).json() as any;assert.equal(j.hosts[0].status,'online');fail=true;await m.refresh();j=await (await fetch(base+'/api/fleet')).json() as any;assert.equal(j.hosts[0].status,'offline');assert.equal(j.hosts[0].snapshot.host,snapshot.host);assert.equal(JSON.stringify(j).includes('private diagnostic'),false);
  });});
@@ -71,8 +72,7 @@ test('remote collector commands outside the ssh allowlist never reach the runner
  assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status,h.snapshot]),[['bad0','offline',null],['bad1','offline',null],['bad2','offline',null],['bad3','offline',null]]);assert.equal(calls.length,0);}finally{await new Promise(r=>monitor.server.close(r));}
 });
 test('an adb host is collected by the server with one adb shell call and parsed in-process',async()=>{
- const adbOutput=(await import('node:fs')).readFileSync(new URL('./fixtures/android/adb-shell.txt',import.meta.url),'utf8');const {ADB_SCRIPT}=await import('../src/android.ts');
- const calls:unknown[][]=[];const monitor=createMonitor({hosts:[{name:'s22',adb:{serial:'EXAMPLE123'}},{name:'phone',adb:{serial:'EXAMPLE456',bin:'/usr/bin/adb'}}]},{run:async(file,args,options)=>{calls.push([file,args,options.timeout]);return {stdout:adbOutput};}});
+  const calls:unknown[][]=[];const monitor=createMonitor({hosts:[{name:'s22',adb:{serial:'EXAMPLE123'}},{name:'phone',adb:{serial:'EXAMPLE456',bin:'/usr/bin/adb'}}]},{run:async(file,args,options)=>{calls.push([file,args,options.timeout]);return {stdout:adbOutput};}});
  monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
   assert.deepEqual(calls,[['adb',['-s','EXAMPLE123','shell',ADB_SCRIPT],30000],['/usr/bin/adb',['-s','EXAMPLE456','shell',ADB_SCRIPT],30000]]);
   assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status,h.snapshot.host,h.snapshot.android.battery.level]),[['s22','online','s22',84],['phone','online','phone',84]]);
@@ -86,6 +86,32 @@ test('a detached adb device shows offline and never raises an offline alert',asy
   const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
   assert.equal(j.hosts[0].status,'offline');assert.equal(j.hosts[0].snapshot,null);assert.equal(JSON.stringify(j).includes('MISSING000'),false);
   assert.deepEqual(posts,[]);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('an adb device on another host is read through one quoted ssh command',async()=>{
+ const calls:unknown[][]=[];const monitor=createMonitor({hosts:[{name:'s22',ssh:'m5u',adb:{serial:'EXAMPLE123',bin:'/opt/homebrew/bin/adb'}}]},{run:async(file,args,options)=>{calls.push([file,args,options.timeout]);return {stdout:adbOutput};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
+  const quoted="'"+ADB_SCRIPT.replaceAll("'","'\\''")+"'";
+  assert.deepEqual(calls,[['ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5','m5u','/opt/homebrew/bin/adb','-s','EXAMPLE123','shell',quoted],30000]]);
+  assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status,h.snapshot.host,h.snapshot.android.battery.level]),[['s22','online','s22',84]]);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('a remote adb entry needs an absolute adb path and a plain ssh alias',async()=>{
+ const bad=[{ssh:'m5u',adb:{serial:'X'}},{ssh:'m5u',adb:{serial:'X',bin:'adb'}},{ssh:'-oProxyCommand=x',adb:{serial:'X',bin:'/a/adb'}},{ssh:'m5u x',adb:{serial:'X',bin:'/a/adb'}}];
+ const calls:unknown[]=[];const monitor=createMonitor({hosts:bad.map((h,i)=>({name:'bad'+i,...h}))},{run:async(...args)=>{calls.push(args);return {stdout:''};}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await monitor.refresh();const j=await (await fetch('http://127.0.0.1:'+port(monitor.server)+'/api/fleet')).json() as any;
+  assert.ok(j.hosts.every((h:any)=>h.status==='offline'&&h.snapshot===null));assert.equal(calls.length,0);
+ }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
+});
+test('an adb device with its own offlineAfterSeconds alerts once when it stays unreachable, and again when it returns',async()=>{
+ let clock=Date.parse('2026-09-29T12:00:00Z'),fail=true;const posts:any[]=[];
+ const monitor=createMonitor({hosts:[{name:'s22',adb:{serial:'X'},offlineAfterSeconds:3600},{name:'quiet',adb:{serial:'Y'}}],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:0}},{now:()=>clock,run:async(_f,args)=>{if(fail||args[1]==='Y')throw Error('private diagnostic');return {stdout:adbOutput};},fetch:async(url,init)=>{posts.push(JSON.parse(String(init.body)));return {ok:true,status:200};},sleep:async()=>{}});
+ monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{
+  for(let i=0;i<4;i++){await monitor.refresh();clock+=1200000;}await monitor.idle();
+  assert.deepEqual(posts.map(p=>p.title),['[host-monitor] s22: collector unreachable']);
+  assert.match(posts[0].body,/^no successful collection for \d+ min$/);assert.equal(JSON.stringify(posts).includes('private diagnostic'),false);
+  fail=false;await monitor.refresh();await monitor.idle();
+  assert.deepEqual(posts.map(p=>p.title),['[host-monitor] s22: collector unreachable','[host-monitor] s22: collector reachable again']);
  }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
 });
 test('adb host entries outside the allowlist never reach the runner',async()=>{
