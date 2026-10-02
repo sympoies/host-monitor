@@ -2,7 +2,9 @@ import {projectSnapshot} from './schema.ts';
 import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
 import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,DEFAULT_ALERT_KINDS,DEFAULT_GRACE_MS,DEFAULT_RESTART_LOOP} from './alerts.ts';
 import type {AlertEvent,NotifierOptions,TrackerState} from './alerts.ts';
-import type {Attention,Snapshot} from './model.ts';
+import {createBeszelHub,hubUrl,hubSystemName} from './beszel.ts';
+import type {HubFetch} from './beszel.ts';
+import type {Attention,Disk,Snapshot} from './model.ts';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -13,9 +15,13 @@ export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:
 // A host is collected locally (node/collector/config), over SSH (ssh plus remote paths), or, for an Android device on the
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
 interface LogUnit{name:string;scope:'user'|'system'}
-export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
-export interface ServerConfig{hosts:HostEntry[];port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
+export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
+export interface ServerConfig{hosts:HostEntry[];beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
 interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
+// Disk capacity of a host whose resource metrics Beszel owns, read from the hub: `stale` is a record older than ten minutes,
+// `unavailable` a failed read, which keeps the last disks and times so the dashboard can say how old they are.
+interface BeszelState{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
+const BESZEL_STALE_MS=10*60*1000;
 interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string}
 // systemd NRestarts counters by service name; a name present in both scopes adds both counters.
 function restartCounts(snapshot:Snapshot):Record<string,number> {
@@ -35,6 +41,15 @@ function logUnits(value:unknown=[]):LogUnit[]{
  return units.map(v=>({scope:v.scope,name:v.name}));
 }
 const seconds=(value:unknown,fallback:unknown,min:number,max:number)=>{const v=value??fallback;if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max)throw new Error('invalid-hosts');return v;};
+function beszelOptions(value:unknown) {
+ if(value===undefined)return null;
+ try{
+  const b=value as {url?:unknown;emailEnv?:unknown;passwordEnv?:unknown};
+  if(!b||typeof b!=='object'||Array.isArray(b))throw new Error('shape');
+  for(const env of [b.emailEnv,b.passwordEnv])if(typeof env!=='string'||!/^[A-Z_][A-Z0-9_]{0,63}$/.test(env))throw new Error('env');
+  return {url:hubUrl(b.url),emailEnv:b.emailEnv as string,passwordEnv:b.passwordEnv as string};
+ }catch(error){throw new Error('invalid-beszel: '+(error as Error).message);}
+}
 interface GraceOverride{host?:string;kind:string;title:string;graceMs:number}
 const graceSeconds=(v:unknown)=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>3600)throw new Error('grace');return v*1000;};
 // The grace window and restart-loop rule apply to every attention item; overrides match one item by kind and title.
@@ -69,11 +84,15 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  const defaultRefresh=config.refreshSeconds??20;
  const hosts:Host[]=config.hosts.map(h=>({...h,importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
  if(!hosts.length||hosts.some(h=>!/^[-a-zA-Z0-9]+$/.test(h.name)))throw new Error('invalid-hosts');
+ if(hosts.some(h=>h.beszelName!==undefined&&!hubSystemName(h.beszelName)))throw new Error('invalid-hosts');
  if(hosts.some(h=>h.logUnits.length>0&&(h.ssh!==undefined||h.adb!==undefined)))throw new Error('invalid-log-units');
  if(config.stateDir!==undefined&&(typeof config.stateDir!=='string'||!path.isAbsolute(config.stateDir)))throw new Error('invalid-state-dir');
  const stateDir=config.stateDir as string|undefined;
  const alerts=alertOptions(config.alerts,hosts.map(h=>h.name));
  const state=new Map<string,HostState>(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
+ const beszelConfig=beszelOptions(config.beszel);
+ const hub=beszelConfig&&createBeszelHub({url:beszelConfig.url,email:()=>env[beszelConfig.emailEnv],password:()=>env[beszelConfig.passwordEnv],fetchImpl:fetchImpl as unknown as HubFetch});
+ const beszel=new Map<string,BeszelState>();
  const history=createHistory({dir:stateDir,maxBytes:config.historyMaxBytes,log});
  const notifier=alerts&&createNotifier({url:alerts.webhookUrl,authEnv:alerts.authEnv,env,kinds:alerts.kinds,quietHours:alerts.quietHours,fetchImpl,...(sleep?{sleep}:{}),log});
  const stateFile=stateDir&&path.join(stateDir,'alert-state.json');
@@ -115,11 +134,19 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(snapshot.schemaVersion!==1||snapshot.host!==h.name||!Array.isArray(snapshot.services)||!Array.isArray(snapshot.attention)||!Number.isFinite(Date.parse(snapshot.collectedAt)))throw new Error('invalid-snapshot');
   return snapshot;
  }
+ // A hub failure never changes the host's own status: the card says Beszel is unavailable and keeps the last disks.
+ async function readBeszel(h:Host) {
+  const previous=beszel.get(h.name);
+  try{const read=await hub!.read(typeof h.beszelName==='string'?h.beszelName:h.name),at=now();
+   beszel.set(h.name,{status:at-Date.parse(read.recordedAt)>BESZEL_STALE_MS?'stale':'ok',lastSuccess:new Date(at).toISOString(),recordedAt:read.recordedAt,disks:read.disks});}
+  catch{beszel.set(h.name,{status:'unavailable',lastSuccess:previous?.lastSuccess??null,recordedAt:previous?.recordedAt??null,disks:previous?.disks??[]});}
+ }
  function refreshHost(name:string):Promise<void> {
   const h=hosts.find(h=>h.name===name);if(!h)return Promise.reject(new Error('unknown-host'));
   const pending=inflight.get(name);if(pending)return pending;
   const attempt=(async()=>{await ready;const old=state.get(name)!,at=new Date(now()).toISOString();
-   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot)));}
+   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot)));
+    if(hub&&snapshot.resources==='external')await readBeszel(h);}
    catch{state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable'});
     // A detached adb device is an expected state, like a sleeping laptop: it raises an offline alert only when its host
     // entry sets its own offlineAfterSeconds, which catches a broken collection path that outlasts any unplugged spell.
@@ -137,7 +164,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(!['GET','HEAD'].includes(req.method??'')){res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;}
   let url:URL,body:string|Buffer,type:string;try{url=new URL(req.url??'','http://localhost');}catch{res.writeHead(400);res.end();return;}
   if(url.pathname==='/healthz'){body=JSON.stringify({ok:true,service:'host-monitor'});type='application/json';}
-  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,hosts:[...state.values()].map(h=>({...h,stale:stale(h)}))});type='application/json';}
+  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,hosts:[...state.values()].map(h=>({...h,stale:stale(h),...(beszel.has(h.name)?{beszel:beszel.get(h.name)}:{})}))});type='application/json';}
   else if(url.pathname==='/api/events'){
    const limit=url.searchParams.has('limit')?Number(url.searchParams.get('limit')):100,host=url.searchParams.get('host')??undefined;
    if(!Number.isInteger(limit)||limit<1||limit>500||host!==undefined&&!state.has(host)){res.writeHead(400);res.end();return;}

@@ -26,6 +26,20 @@ Android devices (fleet-infra decision 0003) run no collector. The server collect
 
 The server configuration lists `hosts` (`name`, and either local `node`/`collector`/`config` paths, an `ssh` alias with remote paths, or `adb`: `{"serial": "<adb serial>"}` with an optional absolute `bin` for the adb binary, which defaults to `adb` on `PATH`; with an `ssh` alias, `bin` is required), an optional `port` and `refreshSeconds`, and optional `importantServices`: service-name substrings that the dashboard's default "important services" filter shows in addition to required, failed, and container entries. Set it server-wide or per host; a host entry's list replaces the server-wide one.
 
+### Beszel disk capacity
+
+A host whose snapshot has `resources: external` delegates generic resource metrics to Beszel. When the server configuration has a `beszel` object, the server also reads that host's disk capacity from the hub, read-only, and adds it to the host in `/api/fleet` as `beszel`. No second collector runs, and Beszel stays the source for resource history and resource alerts.
+
+| Key | Meaning |
+| --- | --- |
+| `beszel.url` | Required. The hub's base URL, plain `http`/`https` on loopback or the tailnet (the same rule as `alerts.webhookUrl`), with no path, credentials, or query. |
+| `beszel.emailEnv`, `beszel.passwordEnv` | Required. Names of environment variables that hold a hub user's email and password. Configuration never holds credentials. A missing value makes the host's Beszel state `unavailable`. |
+| host `beszelName` | Optional. The Beszel system name; defaults to the host `name` (matched case-insensitively). |
+
+After each successful collection of an external host the server authenticates with `POST /api/collections/users/auth-with-password`, looks up the system in `systems`, and reads the newest `1m` record of `system_stats`. Sizes are GiB: `d`/`du` give the root disk, and each `stats.efs` entry (Beszel's `EXTRA_FILESYSTEMS`, keyed by display name) gives one extra filesystem. The session token and the system id stay in memory; a rejected token is replaced once. Each request has a five-second timeout, and the hub is never contacted for hosts that collect their own resources.
+
+`host.beszel` is `{status, lastSuccess, recordedAt, disks}`: `ok`; `stale` when the newest record is over ten minutes old; or `unavailable` when the hub cannot be read, the system is unknown, or credentials are missing. A failed read keeps the last `disks`, `lastSuccess`, and `recordedAt`, so the dashboard shows the last known capacity with its age and "Beszel 暫時讀不到" instead of an error. Hub trouble never changes the host's own `status`, and it raises no attention item: Beszel owns disk threshold alerts (fleet-infra decision 0002). The disk rows use the same layout as self-collected hosts, with the mount `/` for the root disk and the display name for each extra filesystem.
+
 ### On-demand service logs
 
 A locally collected Linux host may set `logUnits` to exact `{ "scope": "user" | "system", "name": "example.service" }` entries. Names must be unique even across scopes. SSH, macOS, and Android hosts cannot enable the log route. The browser shows **查看日誌** only beside a configured unit in a fresh, online snapshot. `GET /api/logs?host=<configured host>&unit=<configured name>` calls `journalctl` with fixed arguments for the most recent 120 lines, a five-second timeout, and a 256 KiB output cap. At most two tails run concurrently; excess requests receive 429. Unknown units are rejected before any command; an offline or stale host cannot serve a retained tail. The route accepts no browser command, path, line count, or scope selection.
