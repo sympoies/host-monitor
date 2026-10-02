@@ -16,7 +16,7 @@ export type Runner=(file:string,args:string[],options:{timeout:number;maxBuffer:
 // server's USB, over adb ({serial, bin?}); an adb host runs nothing on the device (fleet-infra decision 0003).
 interface LogUnit{name:string;scope:'user'|'system'}
 export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
-export interface ServerConfig{hosts:HostEntry[];beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
+export interface ServerConfig{hosts:HostEntry[];hostOrder?:unknown;beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
 interface Host extends HostEntry{importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
 // Disk capacity of a host whose resource metrics Beszel owns, read from the hub: `stale` is a record older than ten minutes,
 // `unavailable` a failed read, which keeps the last disks and times so the dashboard can say how old they are.
@@ -28,7 +28,7 @@ function restartCounts(snapshot:Snapshot):Record<string,number> {
  const counts:Record<string,number>={};for(const s of snapshot.services)if(typeof s.restarts==='number'&&s.manager!=='launchd')counts[s.name]=(counts[s.name]??0)+s.restarts;return counts;
 }
 const exec=promisify(execFile) as Runner,root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../public');
-const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/style.css',['style.css','text/css']]]);
+const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/order.js',['order.js','text/javascript']],['/style.css',['style.css','text/css']]]);
 // Service-name substrings that the dashboard lists under its default "important services" filter.
 function serviceMarkers(value:unknown=[]):string[]{if(!Array.isArray(value)||value.length>100||value.some(v=>typeof v!=='string'||!/^[a-zA-Z0-9_.:@-]{1,128}$/.test(v)))throw new Error('invalid-important-services');return [...value];}
 // Only locally collected Linux units may expose a journal tail. The configured exact names, never a browser value,
@@ -90,6 +90,10 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  const stateDir=config.stateDir as string|undefined;
  const alerts=alertOptions(config.alerts,hosts.map(h=>h.name));
  const state=new Map<string,HostState>(hosts.map(h=>[h.name,{name:h.name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'loading',snapshot:null,lastAttempt:null,lastSuccess:null}]));
+ // The default dashboard order: the listed hosts first, then the rest in configuration order. Viewers may override it per browser.
+ const hostOrder=config.hostOrder??[];
+ if(!Array.isArray(hostOrder)||hostOrder.length>100||hostOrder.some(n=>!hosts.some(h=>h.name===n))||new Set(hostOrder).size!==hostOrder.length)throw new Error('invalid-host-order');
+ const defaultOrder=[...(hostOrder as string[]),...hosts.map(h=>h.name).filter(n=>!hostOrder.includes(n))];
  const beszelConfig=beszelOptions(config.beszel);
  const hub=beszelConfig&&createBeszelHub({url:beszelConfig.url,email:()=>env[beszelConfig.emailEnv],password:()=>env[beszelConfig.passwordEnv],fetchImpl:fetchImpl as unknown as HubFetch});
  const beszel=new Map<string,BeszelState>();
@@ -166,7 +170,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(!['GET','HEAD'].includes(req.method??'')){res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;}
   let url:URL,body:string|Buffer,type:string;try{url=new URL(req.url??'','http://localhost');}catch{res.writeHead(400);res.end();return;}
   if(url.pathname==='/healthz'){body=JSON.stringify({ok:true,service:'host-monitor'});type='application/json';}
-  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,hosts:[...state.values()].map(h=>({...h,stale:stale(h),...(beszel.has(h.name)?{beszel:beszelView(beszel.get(h.name)!)}:{})}))});type='application/json';}
+  else if(url.pathname==='/api/fleet'){body=JSON.stringify({schemaVersion:1,serverTime:new Date(now()).toISOString(),refreshSeconds:defaultRefresh,defaultOrder,hosts:[...state.values()].map(h=>({...h,stale:stale(h),...(beszel.has(h.name)?{beszel:beszelView(beszel.get(h.name)!)}:{})}))});type='application/json';}
   else if(url.pathname==='/api/events'){
    const limit=url.searchParams.has('limit')?Number(url.searchParams.get('limit')):100,host=url.searchParams.get('host')??undefined;
    if(!Number.isInteger(limit)||limit<1||limit>500||host!==undefined&&!state.has(host)){res.writeHead(400);res.end();return;}

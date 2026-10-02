@@ -1,3 +1,4 @@
+import {loadOrder,saveOrder,clearOrder,moveHost} from './order.js';
 // Types for the read-only JSON API this page renders; the server's projection keeps only these fields.
 interface Attention{severity:string;kind:string;title:string;detail?:string}
 interface Service{name:string;scope:string;health:string;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;required?:boolean}
@@ -7,10 +8,10 @@ interface Snapshot{platform?:string;resources?:string;hardware:{cpuCount:number;
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
 interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 interface HostView{name:string;status:string;stale:boolean;beszel?:BeszelView;importantServices?:string[];logUnits?:{name:string;scope:string}[];snapshot:Snapshot|null;lastSuccess:string|null}
-interface Fleet{serverTime:string;refreshSeconds:number;hosts:HostView[]}
+interface Fleet{serverTime:string;refreshSeconds:number;defaultOrder?:string[];hosts:HostView[]}
 interface HostEvent{at:string;host:string;type:string;kind:string;title:string;severity:string;detail?:string}
 interface Row{name:string;scope?:string;description?:string;health:string;source:string;details?:string;required?:boolean;active?:string;state?:string}
-let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false,logRequest=0,openedLog:{host:string;unit:string}|undefined;
+let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false,logRequest=0,dragging=false,openedLog:{host:string;unit:string}|undefined;
 const $=(id:string)=>document.getElementById(id) as HTMLElement;
 const input=(id:string)=>$(id) as HTMLInputElement;
 const el=(tag:string,text?:string,className?:string)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;};
@@ -53,7 +54,29 @@ function rows(){if(!fleet)return;const host=fleet.hosts.find(h=>h.name===selecte
   }
   const state=el('td');state.append(pill(healthLabel[u.health]||'無法確認',u.health));if(u.health==='unknown'&&u.state==='running')state.append(el('small','執行中 · 未設定健康檢查'));tr.append(name,state,el('td',u.source),el('td',u.details));tbody.append(tr);}$('empty').hidden=list.length>0;$('service-count').textContent=`已安裝 ${s.services.length} 個 service · ${s.containers?.length??0} 個容器 · 顯示 ${list.length} 項`;
 }
-function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;$('hosts').replaceChildren();for(const h of fleet.hosts){const button=el('button',undefined,'host '+(h.name===selected?'selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');const good=h.status==='online'&&!h.stale;top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok'));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.addEventListener('click',()=>{closeLog();selected=h.name;location.hash=selected;render();});$('hosts').append(button);}
+// The default order comes from the server; a viewer's order is saved in this browser only. Storage can be unavailable.
+const storage=()=>{try{return localStorage;}catch{return {getItem:()=>null,setItem:()=>{throw Error();},removeItem:()=>{throw Error();}};}};
+const hostOrder=(defaults:string[])=>loadOrder(storage(),defaults);
+const slots=()=>[...$('hosts').children] as HTMLElement[];
+const currentOrder=()=>slots().map(n=>n.dataset.host as string);
+function reorder(defaults:string[],order:string[]){if(order.join()===defaults.join())clearOrder(storage());else saveOrder(storage(),order);render();}
+// Each card has a grip: drag it with a mouse or finger, or focus it and press an arrow key to move the card one place.
+function grip(name:string,defaults:string[]){
+ const handle=el('button','⋮⋮','host-grip');handle.setAttribute('type','button');handle.setAttribute('aria-label',`移動 ${name} 卡片（拖曳，或用方向鍵）`);handle.title='拖曳以調整順序';
+ handle.addEventListener('keydown',e=>{const delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:['ArrowRight','ArrowDown'].includes(e.key)?1:0;if(!delta)return;e.preventDefault();
+  const order=currentOrder();reorder(defaults,moveHost(order,name,order.indexOf(name)+delta));($('hosts').querySelector(`[data-host="${CSS.escape(name)}"] .host-grip`) as HTMLElement|null)?.focus();});
+ handle.addEventListener('pointerdown',e=>{if(e.button!==0&&e.pointerType==='mouse')return;e.preventDefault();dragging=true;
+  const slot=handle.parentElement as HTMLElement;slot.classList.add('dragging');
+  const move=(ev:PointerEvent)=>{const others=slots().filter(n=>n!==slot);let index=others.length;
+   for(let i=0;i<others.length;i++){const r=others[i].getBoundingClientRect();if(ev.clientY<r.top||ev.clientY<=r.bottom&&ev.clientX<r.left+r.width/2){index=i;break;}}
+   const after=others[index]??null;if(slot.nextElementSibling!==after)$('hosts').insertBefore(slot,after);};
+  const done=(ev:PointerEvent)=>{removeEventListener('pointermove',move);removeEventListener('pointerup',done);removeEventListener('pointercancel',done);dragging=false;slot.classList.remove('dragging');
+   if(ev.type==='pointerup')reorder(defaults,currentOrder());else render();};
+  addEventListener('pointermove',move);addEventListener('pointerup',done);addEventListener('pointercancel',done);});
+ return handle;
+}
+function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;const focused=(document.activeElement as HTMLElement|null)?.classList.contains('host-grip')?(document.activeElement as HTMLElement).parentElement?.dataset.host:undefined;$('hosts').replaceChildren();const defaults=fleet.defaultOrder??fleet.hosts.map(h=>h.name),order=hostOrder(defaults);$('reset-order').hidden=order.join()===defaults.join();for(const h of [...fleet.hosts].sort((a,b)=>order.indexOf(a.name)-order.indexOf(b.name))){const slot=el('div',undefined,'host-slot');slot.dataset.host=h.name;const button=el('button',undefined,'host '+(h.name===selected?'selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');const good=h.status==='online'&&!h.stale;top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok'));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.addEventListener('click',()=>{closeLog();selected=h.name;location.hash=selected;render();});slot.append(button,grip(h.name,defaults));$('hosts').append(slot);}
+ if(focused)($('hosts').querySelector(`[data-host="${CSS.escape(focused)}"] .host-grip`) as HTMLElement|null)?.focus();
  const h=fleet.hosts.find(h=>h.name===selected);if(!h)return;const s=h.snapshot;
  if(openedLog&&(openedLog.host!==h.name||h.status!=='online'||h.stale))closeLog();
  $('host-title').textContent=h.name;$('connection').textContent=h.status!=='online'||h.stale?'無法取得即時資料。'+(s?'下方保留最後一次成功的快照，請留意更新時間。':'正在等待 collector 回應。'):'';$('updated').textContent=`網頁更新 ${time(fleet.serverTime)} · 每 ${fleet.refreshSeconds} 秒採集`;
@@ -83,7 +106,7 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
 }
 const eventLabel:Record<string,string>={attention:'需要關注',recovered:'已恢復',offline:'無法連線',online:'恢復連線'};
 function renderEvents(host:string){const list=events.filter(e=>e.host===host).slice(0,20);$('events').replaceChildren();for(const e of list){const div=el('div',e.title,'check');div.append(pill(eventLabel[e.type]||e.type,e.type==='attention'?(e.severity==='error'?'error':'warning'):e.type==='offline'?'error':'ok'),el('small',`${e.kind} · ${new Date(e.at).toLocaleString('zh-TW',{hour12:false})}${e.detail?' · '+e.detail:''}`));$('events').append(div);}if(!list.length)$('events').append(el('div','目前沒有紀錄到狀態轉換','check'));}
-async function refresh(){if(fetching)return;fetching=true;try{const r=await fetch('/api/fleet',{cache:'no-store'});if(!r.ok)throw Error();fleet=await r.json();try{const e=await fetch('/api/events?limit=200',{cache:'no-store'});if(e.ok)events=(await e.json()).events;}catch{}render();}catch{$('connection').textContent='監控 server 暫時無法連線；目前頁面資料可能已過期。';}finally{fetching=false;}}
-$('refresh').addEventListener('click',refresh);$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);
+async function refresh(){if(fetching||dragging)return;fetching=true;try{const r=await fetch('/api/fleet',{cache:'no-store'});if(!r.ok)throw Error();fleet=await r.json();if(dragging)return;try{const e=await fetch('/api/events?limit=200',{cache:'no-store'});if(e.ok)events=(await e.json()).events;}catch{}if(!dragging)render();}catch{$('connection').textContent='監控 server 暫時無法連線；目前頁面資料可能已過期。';}finally{fetching=false;}}
+$('refresh').addEventListener('click',refresh);$('reset-order').addEventListener('click',()=>{clearOrder(storage());render();});$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);
 $('log-close').addEventListener('click',closeLog);$('log-refresh').addEventListener('click',()=>{if(openedLog)void openLog(openedLog.host,openedLog.unit);});
 void refresh();setInterval(refresh,5000);

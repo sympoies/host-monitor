@@ -26,6 +26,10 @@ Android devices (fleet-infra decision 0003) run no collector. The server collect
 
 The server configuration lists `hosts` (`name`, and either local `node`/`collector`/`config` paths, an `ssh` alias with remote paths, or `adb`: `{"serial": "<adb serial>"}` with an optional absolute `bin` for the adb binary, which defaults to `adb` on `PATH`; with an `ssh` alias, `bin` is required), an optional `port` and `refreshSeconds`, and optional `importantServices`: service-name substrings that the dashboard's default "important services" filter shows in addition to required, failed, and container entries. Set it server-wide or per host; a host entry's list replaces the server-wide one.
 
+### Host card order
+
+The server configuration may set `hostOrder`, a list of configured host names (each at most once). `/api/fleet` returns it as `defaultOrder`: the listed hosts first, then the remaining hosts in configuration order; without `hostOrder` that is simply the `hosts` order. The dashboard shows the cards in `defaultOrder` until the viewer reorders them: drag a card's grip (mouse or touch), or focus it and press an arrow key to move the card one place. The viewer's order is saved only in that browser's `localStorage` (key `host-monitor.hostOrder`) and never reaches the server. Hosts missing from a saved order are appended in default order, removed hosts are ignored, and unavailable or corrupt storage falls back to the default order. "重設順序" appears once a saved order differs from the default and restores it. The merge logic is `public/order.ts`, served as `/order.js`.
+
 ### Beszel disk capacity
 
 A host whose snapshot has `resources: external` delegates generic resource metrics to Beszel. When the server configuration has a `beszel` object, the server also reads that host's disk capacity from the hub, read-only, and adds it to the host in `/api/fleet` as `beszel`. No second collector runs, and Beszel stays the source for resource history and resource alerts.
