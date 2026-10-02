@@ -64,15 +64,15 @@ The optional `alerts` object sends transitions to a notification relay. The keys
 | host `offlineAfterSeconds` | Per host entry, not under `alerts`. Overrides the value above for that host, and is the only way an `adb` device raises an offline alert: it alerts once after this many seconds without a successful collection and sends a recovery when collection returns. Unset, an adb device never alerts offline. The count starts at the first failure after the server starts, so a restart delays the alert. |
 | `quietHours` | `{"start":"23:00","end":"07:00","timeZone":"Asia/Taipei"}`. During quiet hours alerts are held and sent afterwards as one summary; an item that recovers meanwhile is dropped. |
 | `graceSeconds` | Default 90, from 0 to 3600. How long a new attention item must last before it is recorded and alerted. It also applies to history-only kinds. |
-| `graceOverrides` | A list of `{"host":"sympoies","kind":"probe","title":"Agent Console speech","graceSeconds":180}`. Each entry sets the window of one item, matched by its exact kind and title; `host` is optional and must name a configured host. The first match wins. |
+| `graceOverrides` | A list of `{"host":"server","kind":"probe","title":"Agent Console speech","graceSeconds":180}`. Each entry sets the window of one item, matched by its exact kind and title; `host` is optional and must name a configured host. The first match wins. |
 | `restartLoop` | `{"restarts":3,"windowSeconds":600}` by default. `restarts` is 0 (disabled) or 2 to 100; `windowSeconds` is 60 to 86400. |
 
 Delivery runs on its own bounded queue: 100 messages, 3 attempts with backoff, and a 5 s request timeout. Collection never waits for it.
 
-Each alert is one JSON `POST` in the Apprise API shape used by the sympoies `telegram-notify` relay. That relay is `http://127.0.0.1:8000/notify` on sympoies, the same endpoint dsh-notify uses, and it holds the Telegram token server-side. For example:
+Each alert is one JSON `POST` in the Apprise API shape used by a local notification relay. That relay is `http://127.0.0.1:8000/notify` on the server, the same endpoint dsh-notify uses, and it holds the chat service token server-side. For example:
 
 ```json
-{"title":"[host-monitor] c8: service needs attention","body":"web.service — user · inactive · success","type":"failure","format":"text"}
+{"title":"[host-monitor] collector-a: service needs attention","body":"web.service — user · inactive · success","type":"failure","format":"text"}
 ```
 
 The `type` values are:
@@ -97,7 +97,7 @@ Example server configuration:
 ```json
 {"port":9105,"refreshSeconds":20,"stateDir":"/var/lib/host-monitor","historyMaxBytes":1048576,
  "alerts":{"webhookUrl":"http://127.0.0.1:8000/notify","offlineAfterSeconds":300,"quietHours":{"start":"23:00","end":"07:00","timeZone":"Asia/Taipei"}},
- "hosts":[{"name":"c8","ssh":"c8","node":"/usr/bin/node","collector":"/opt/host-monitor/current/src/collector.ts","config":"/etc/host-monitor/c8.json","refreshSeconds":30,"timeoutSeconds":20}]}
+ "hosts":[{"name":"collector-a","ssh":"collector-a","node":"/usr/bin/node","collector":"/opt/host-monitor/current/src/collector.ts","config":"/etc/host-monitor/collector-a.json","refreshSeconds":30,"timeoutSeconds":20}]}
 ```
 
 ## Releases

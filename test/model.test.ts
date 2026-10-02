@@ -60,6 +60,6 @@ test('systemd restart counters are collected so the server can detect restart lo
  };
  const rows=await collectSystemd('user',[],run);
  assert.equal(rows.find(r=>r.name==='serve.service')!.restarts,4);assert.equal(rows.find(r=>r.name==='old.service')!.restarts,null,'systemd without NRestarts reports no counter');
- const projected=projectSnapshot({schemaVersion:1,host:'c8',collectedAt:'2026-10-01T02:02:00Z',hardware:{cpuCount:1,load:[0,0,0],uptime:1,kernel:'Linux'},services:rows,attention:[]});
+ const projected=projectSnapshot({schemaVersion:1,host:'collector-a',collectedAt:'2026-10-01T02:02:00Z',hardware:{cpuCount:1,load:[0,0,0],uptime:1,kernel:'Linux'},services:rows,attention:[]});
  assert.equal(projected.services.find(s=>s.name==='serve.service')!.restarts,4);
 });

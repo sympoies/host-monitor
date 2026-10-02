@@ -9,14 +9,14 @@ function recorder({fail=0}={}){const calls:{url:string;init:RequestInit&{headers
 
 test('transitions are emitted once per new attention item, recovery and offline period',()=>{
  const t=createTracker({offlineAfterMs:300000,graceMs:0});
- assert.deepEqual(t.online('c8',[],T0),[],'first observation is a silent baseline');
- const raised=t.online('c8',[stopped],T0+20000);assert.deepEqual(raised.map(e=>[e.type,e.kind,e.title,e.severity]),[['attention','service','web.service','error']]);assert.equal(raised[0].at,new Date(T0+20000).toISOString());
- assert.deepEqual(t.online('c8',[{...stopped,detail:'user · inactive · exit-code'}],T0+40000),[],'a changed detail is the same item');
- assert.deepEqual(t.online('c8',[],T0+60000).map(e=>[e.type,e.title]),[['recovered','web.service']]);
- assert.deepEqual(t.offline('c8',T0+80000),[]);assert.deepEqual(t.offline('c8',T0+379999),[]);
- assert.deepEqual(t.offline('c8',T0+380000).map(e=>[e.type,e.kind,e.title]),[['offline','host','c8']]);assert.deepEqual(t.offline('c8',T0+900000),[]);
- assert.deepEqual(t.online('c8',[],T0+920000).map(e=>e.type),['online']);
- assert.deepEqual(t.online('c8',[],T0+940000),[]);
+ assert.deepEqual(t.online('collector-a',[],T0),[],'first observation is a silent baseline');
+ const raised=t.online('collector-a',[stopped],T0+20000);assert.deepEqual(raised.map(e=>[e.type,e.kind,e.title,e.severity]),[['attention','service','web.service','error']]);assert.equal(raised[0].at,new Date(T0+20000).toISOString());
+ assert.deepEqual(t.online('collector-a',[{...stopped,detail:'user · inactive · exit-code'}],T0+40000),[],'a changed detail is the same item');
+ assert.deepEqual(t.online('collector-a',[],T0+60000).map(e=>[e.type,e.title]),[['recovered','web.service']]);
+ assert.deepEqual(t.offline('collector-a',T0+80000),[]);assert.deepEqual(t.offline('collector-a',T0+379999),[]);
+ assert.deepEqual(t.offline('collector-a',T0+380000).map(e=>[e.type,e.kind,e.title]),[['offline','host','collector-a']]);assert.deepEqual(t.offline('collector-a',T0+900000),[]);
+ assert.deepEqual(t.online('collector-a',[],T0+920000).map(e=>e.type),['online']);
+ assert.deepEqual(t.online('collector-a',[],T0+940000),[]);
 });
 test('webhook URLs must be loopback or tailnet without embedded credentials',()=>{
  for(const url of ['http://127.0.0.1:8000/notify','http://localhost:8000/notify','http://[::1]:8000/notify','https://relay.example.ts.net:8001/notify','http://100.64.0.10:8000/notify'])assert.equal(webhookUrl(url).href,new URL(url).href);
@@ -30,33 +30,33 @@ test('quiet hours wrap midnight in the configured time zone',()=>{
 });
 test('notifications use the relay JSON shape, a fixed prefix and an auth header only from the named environment variable',async()=>{
  const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',authEnv:'RELAY_TOKEN',env:{RELAY_TOKEN:'env-secret'},fetchImpl,sleep:async()=>{}});
- const t=createTracker({graceMs:0});t.online('c8',[],T0);n.submit(t.online('c8',[stopped],T0+1),T0+1);n.submit(t.online('c8',[{severity:'warning',kind:'journal',title:'noisy.service',detail:'3 errors in the last hour'}],T0+2),T0+2);await n.idle();
+ const t=createTracker({graceMs:0});t.online('collector-a',[],T0);n.submit(t.online('collector-a',[stopped],T0+1),T0+1);n.submit(t.online('collector-a',[{severity:'warning',kind:'journal',title:'noisy.service',detail:'3 errors in the last hour'}],T0+2),T0+2);await n.idle();
  assert.equal(calls.length,2,'recovery of the service is sent; journal kinds are history only by default');
- assert.deepEqual(calls[0].body,{title:'[host-monitor] c8: service needs attention',body:'web.service — user · inactive · success',type:'failure',format:'text'});
- assert.deepEqual(calls[1].body,{title:'[host-monitor] c8: service recovered',body:'web.service',type:'success',format:'text'});
+ assert.deepEqual(calls[0].body,{title:'[host-monitor] collector-a: service needs attention',body:'web.service — user · inactive · success',type:'failure',format:'text'});
+ assert.deepEqual(calls[1].body,{title:'[host-monitor] collector-a: service recovered',body:'web.service',type:'success',format:'text'});
  assert.equal(calls[0].init.method,'POST');assert.equal(calls[0].init.headers['content-type'],'application/json');assert.equal(calls[0].init.headers.authorization,'Bearer env-secret');
- const plain=recorder();const m=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:plain.fetchImpl,sleep:async()=>{}});m.submit([{at:new Date(T0).toISOString(),host:'c8',type:'offline',kind:'host',title:'c8',severity:'error',detail:'no successful collection for 5 min'}],T0);await m.idle();
- assert.equal(plain.calls[0].init.headers.authorization,undefined);assert.equal(plain.calls[0].body.title,'[host-monitor] c8: collector unreachable');
+ const plain=recorder();const m=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:plain.fetchImpl,sleep:async()=>{}});m.submit([{at:new Date(T0).toISOString(),host:'collector-a',type:'offline',kind:'host',title:'collector-a',severity:'error',detail:'no successful collection for 5 min'}],T0);await m.idle();
+ assert.equal(plain.calls[0].init.headers.authorization,undefined);assert.equal(plain.calls[0].body.title,'[host-monitor] collector-a: collector unreachable');
 });
 test('delivery retries are bounded, queued and never awaited by the caller',async()=>{
  const flaky=recorder({fail:2});const sleeps:number[]=[];const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:flaky.fetchImpl,sleep:async (ms:number)=>{sleeps.push(ms);},retries:3});
- const event={at:new Date(T0).toISOString(),host:'c8',type:'attention' as const,kind:'service',title:'web.service',severity:'error'};
+ const event={at:new Date(T0).toISOString(),host:'collector-a',type:'attention' as const,kind:'service',title:'web.service',severity:'error'};
  assert.equal(n.submit([event],T0),undefined);await n.idle();assert.equal(flaky.calls.length,3);assert.equal(sleeps.length,2);assert.deepEqual(n.stats(),{sent:1,failed:0,dropped:0});
  const dead=recorder({fail:99});const d=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:dead.fetchImpl,sleep:async()=>{},retries:3,maxQueue:2});
  d.submit([event,{...event,title:'a'},{...event,title:'b'}],T0);await d.idle();assert.deepEqual(d.stats(),{sent:0,failed:2,dropped:1});assert.equal(dead.calls.length,6);
 });
 test('quiet hours defer alerts to one summary and drop items that recovered meanwhile',async()=>{
  const {calls,fetchImpl}=recorder();const quietHours={start:'23:00',end:'07:00',timeZone:'Asia/Taipei'};const n=createNotifier({url:'http://127.0.0.1:8000/notify',quietHours,fetchImpl,sleep:async()=>{}});
- const night=Date.parse('2026-09-28T16:00:00Z'),morning=Date.parse('2026-09-28T23:05:00Z');const t=createTracker({graceMs:0});t.online('c8',[],night);
- n.submit(t.online('c8',[stopped,{severity:'error',kind:'probe',title:'web API',detail:'HTTP 500'}],night),night);n.submit(t.online('c8',[stopped],night+60000),night+60000);n.tick(night+120000);await n.idle();
+ const night=Date.parse('2026-09-28T16:00:00Z'),morning=Date.parse('2026-09-28T23:05:00Z');const t=createTracker({graceMs:0});t.online('collector-a',[],night);
+ n.submit(t.online('collector-a',[stopped,{severity:'error',kind:'probe',title:'web API',detail:'HTTP 500'}],night),night);n.submit(t.online('collector-a',[stopped],night+60000),night+60000);n.tick(night+120000);await n.idle();
  assert.equal(calls.length,0);n.tick(morning);await n.idle();assert.equal(calls.length,1);
- assert.equal(calls[0].body.title,'[host-monitor] quiet hours summary');assert.match(calls[0].body.body,/c8 service web\.service needs attention/);assert.doesNotMatch(calls[0].body.body,/web API/);
+ assert.equal(calls[0].body.title,'[host-monitor] quiet hours summary');assert.match(calls[0].body.body,/collector-a service web\.service needs attention/);assert.doesNotMatch(calls[0].body.body,/web API/);
  n.tick(morning+60000);await n.idle();assert.equal(calls.length,1);
 });
 test('history is an append-only JSONL log capped by size and rotation that survives restart',async()=>{
  const dir=await tmp();try{
   const h=createHistory({dir,maxBytes:600,keep:50});await h.load();
-  for(let i=0;i<20;i++)h.add({at:new Date(T0+i*1000).toISOString(),host:'c8',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});await h.flush();
+  for(let i=0;i<20;i++)h.add({at:new Date(T0+i*1000).toISOString(),host:'collector-a',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});await h.flush();
   const files=(await fs.readdir(dir)).sort();assert.deepEqual(files,['events.1.jsonl','events.jsonl']);
   for(const f of files)assert.ok((await fs.stat(path.join(dir,f))).size<=600);
   assert.deepEqual(h.recent({limit:3}).map(e=>e.title),['unit-19','unit-18','unit-17']);
@@ -65,8 +65,8 @@ test('history is an append-only JSONL log capped by size and rotation that survi
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
 
-const host={name:'c8',ssh:'c8',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
-const snap=(at:number,attention:Attention[]=[])=>({schemaVersion:1,host:'c8',collectedAt:new Date(at).toISOString(),services:[],attention,hardware:{cpuCount:8,load:[0,0,0],uptime:10,kernel:'Linux'}});
+const host={name:'collector-a',ssh:'collector-a',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
+const snap=(at:number,attention:Attention[]=[])=>({schemaVersion:1,host:'collector-a',collectedAt:new Date(at).toISOString(),services:[],attention,hardware:{cpuCount:8,load:[0,0,0],uptime:10,kernel:'Linux'}});
 async function serve(monitor:ReturnType<typeof createMonitor>,fn:(base:string)=>Promise<void>){monitor.server.listen(0,'127.0.0.1');await once(monitor.server,'listening');try{await fn('http://127.0.0.1:'+port(monitor.server));}finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}}
 test('a stopped required service produces exactly one notification and one recovery, recorded in /api/events',async()=>{
  const dir=await tmp();try{
@@ -75,10 +75,10 @@ test('a stopped required service produces exactly one notification and one recov
   const monitor=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
   await serve(monitor,async base=>{
    await monitor.refresh();attention=[stopped];for(let i=0;i<6;i++){clock+=20000;await monitor.refresh();}attention=[];clock+=20000;await monitor.refresh();clock+=20000;await monitor.refresh();await monitor.idle();
-   assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] c8: service needs attention','[host-monitor] c8: service recovered']);
-   const events=(await (await fetch(base+'/api/events')).json() as any).events;assert.deepEqual(events.map((e:any)=>[e.type,e.host,e.title]),[['recovered','c8','web.service'],['attention','c8','web.service']]);
+   assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] collector-a: service needs attention','[host-monitor] collector-a: service recovered']);
+   const events=(await (await fetch(base+'/api/events')).json() as any).events;assert.deepEqual(events.map((e:any)=>[e.type,e.host,e.title]),[['recovered','collector-a','web.service'],['attention','collector-a','web.service']]);
    assert.equal((await (await fetch(base+'/api/events?limit=1')).json() as any).events.length,1);
-   for(const q of ['limit=0','limit=501','limit=x','host=other','host=c8;id'])assert.equal((await fetch(base+'/api/events?'+q)).status,400);
+   for(const q of ['limit=0','limit=501','limit=x','host=other','host=collector-a;id'])assert.equal((await fetch(base+'/api/events?'+q)).status,400);
    assert.equal((await fetch(base+'/api/events',{method:'POST'})).status,405);
   });
   attention=[stopped];const restarted=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
@@ -90,26 +90,26 @@ test('a stopped required service produces exactly one notification and one recov
 test('a hung host times out on its own without delaying other hosts',async()=>{
  const monitor=createMonitor({hosts:[{...host,name:'hung',ssh:'hung',timeoutSeconds:0.3},host]},{run:async(_bin:string,args:string[])=>args.includes('hung')?new Promise(()=>{}):{stdout:JSON.stringify(snap(Date.now()))}});
  await serve(monitor,async base=>{
-  const all=monitor.refresh();await monitor.refreshHost('c8');
-  let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','loading'],['c8','online']]);
+  const all=monitor.refresh();await monitor.refreshHost('collector-a');
+  let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','loading'],['collector-a','online']]);
   const started=Date.now();await all;assert.ok(Date.now()-started<2000);
-  j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','offline'],['c8','online']]);
+  j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.status]),[['hung','offline'],['collector-a','online']]);
  });
  assert.throws(()=>createMonitor({hosts:[{...host,timeoutSeconds:0}]}),/invalid-hosts/);assert.throws(()=>createMonitor({hosts:[{...host,refreshSeconds:'20'}]}),/invalid-hosts/);
 });
 test('staleness follows each host refresh interval',async()=>{
- let clock=T0;const monitor=createMonitor({refreshSeconds:20,hosts:[host,{...host,name:'slow',ssh:'slow',refreshSeconds:120}]},{now:()=>clock,run:async(_b:string,args:string[])=>({stdout:JSON.stringify({...snap(T0),host:args.includes('slow')?'slow':'c8'})})});
- await serve(monitor,async base=>{await monitor.refresh();clock+=61000;let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.refreshSeconds,h.stale]),[['c8',20,true],['slow',120,false]]);
+ let clock=T0;const monitor=createMonitor({refreshSeconds:20,hosts:[host,{...host,name:'slow',ssh:'slow',refreshSeconds:120}]},{now:()=>clock,run:async(_b:string,args:string[])=>({stdout:JSON.stringify({...snap(T0),host:args.includes('slow')?'slow':'collector-a'})})});
+ await serve(monitor,async base=>{await monitor.refresh();clock+=61000;let j=await (await fetch(base+'/api/fleet')).json() as any;assert.deepEqual(j.hosts.map((h:any)=>[h.name,h.refreshSeconds,h.stale]),[['collector-a',20,true],['slow',120,false]]);
   clock+=300000;j=await (await fetch(base+'/api/fleet')).json() as any;assert.equal(j.hosts[1].stale,true);});
 });
 test('alert configuration rejects unsafe webhooks and never needs a token value',()=>{
- for(const alerts of [{webhookUrl:'https://api.telegram.org/bot123/sendMessage'},{webhookUrl:'http://127.0.0.1:8000/notify',authEnv:'lower-case'},{webhookUrl:'http://127.0.0.1:8000/notify',quietHours:{start:'x',end:'07:00'}},{webhookUrl:'http://127.0.0.1:8000/notify',kinds:['service','bogus kind!']},{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:-1}])assert.throws(()=>createMonitor({hosts:[host],alerts}),/invalid-alerts/);
+ for(const alerts of [{webhookUrl:'https://example.invalid/hook'},{webhookUrl:'http://127.0.0.1:8000/notify',authEnv:'lower-case'},{webhookUrl:'http://127.0.0.1:8000/notify',quietHours:{start:'x',end:'07:00'}},{webhookUrl:'http://127.0.0.1:8000/notify',kinds:['service','bogus kind!']},{webhookUrl:'http://127.0.0.1:8000/notify',offlineAfterSeconds:-1}])assert.throws(()=>createMonitor({hosts:[host],alerts}),/invalid-alerts/);
  assert.throws(()=>createMonitor({hosts:[host],stateDir:'relative/dir'}),/invalid-state-dir/);
 });
 test('history keeps persisting after events.jsonl is removed externally and reports it once with a fixed warning',async()=>{
  const dir=await tmp();try{
   const warnings:string[]=[];const h=createHistory({dir,maxBytes:600,keep:100,log:(m:string)=>warnings.push(m)});await h.load();
-  const ev=(i:number)=>({at:new Date(T0+i*1000).toISOString(),host:'c8',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});
+  const ev=(i:number)=>({at:new Date(T0+i*1000).toISOString(),host:'collector-a',type:'attention',kind:'service',title:'unit-'+i,severity:'error'});
   for(let i=0;i<4;i++)h.add(ev(i));await h.flush();
   await fs.rm(path.join(dir,'events.jsonl'));
   for(let i=4;i<12;i++)h.add(ev(i));await h.flush();
@@ -121,103 +121,103 @@ test('history keeps persisting after events.jsonl is removed externally and repo
 });
 test('Android device attention is notified by default; generic disk and memory kinds stay with Beszel',async()=>{
  const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl,sleep:async()=>{}});
- const t=createTracker({graceMs:0});t.online('s22',[],T0);
- n.submit(t.online('s22',[{severity:'error',kind:'device',title:'Battery temperature',detail:'46.0 °C'},{severity:'warning',kind:'disk',title:'/',detail:'90% used'}],T0+1),T0+1);await n.idle();
- assert.deepEqual(calls.map(c=>c.body),[{title:'[host-monitor] s22: device needs attention',body:'Battery temperature — 46.0 °C',type:'failure',format:'text'}]);
+ const t=createTracker({graceMs:0});t.online('phone-a',[],T0);
+ n.submit(t.online('phone-a',[{severity:'error',kind:'device',title:'Battery temperature',detail:'46.0 °C'},{severity:'warning',kind:'disk',title:'/',detail:'90% used'}],T0+1),T0+1);await n.idle();
+ assert.deepEqual(calls.map(c=>c.body),[{title:'[host-monitor] phone-a: device needs attention',body:'Battery temperature — 46.0 °C',type:'failure',format:'text'}]);
 });
 
 // Issue #15: self-healing restarts stay quiet; sustained failures and restart loops still alert.
 const probe={severity:'error',kind:'probe',title:'Agent Console speech',detail:'Endpoint unavailable'};
-const restarting={severity:'error',kind:'service',title:'agent-console-c8-serve.service',detail:'user · activating · exit-code'};
+const restarting={severity:'error',kind:'service',title:'agent-console-collector-a-serve.service',detail:'user · activating · exit-code'};
 const types=(events:{type:string;kind:string;title:string}[])=>events.map(e=>[e.type,e.kind,e.title]);
 test('an item that recovers within the default 90 s grace window raises no alert and no recovery',()=>{
- const t=createTracker();t.online('c8',[],T0,{'agent-console-c8-serve.service':2});
- assert.deepEqual(t.online('c8',[restarting,probe],T0+30000,{'agent-console-c8-serve.service':2}),[],'exit 75 seen while systemd restarts the unit');
- assert.deepEqual(t.online('c8',[probe],T0+60000,{'agent-console-c8-serve.service':3}),[],'one automatic restart is not a loop');
- assert.deepEqual(t.online('c8',[probe],T0+110000,{'agent-console-c8-serve.service':3}),[],'80 s after it was first seen the probe is still within the window');
- assert.deepEqual(t.online('c8',[],T0+120000,{'agent-console-c8-serve.service':3}),[],'no recovery for an incident that never alerted');
- assert.deepEqual(t.snapshot().c8.active,[]);
+ const t=createTracker();t.online('collector-a',[],T0,{'agent-console-collector-a-serve.service':2});
+ assert.deepEqual(t.online('collector-a',[restarting,probe],T0+30000,{'agent-console-collector-a-serve.service':2}),[],'exit 75 seen while systemd restarts the unit');
+ assert.deepEqual(t.online('collector-a',[probe],T0+60000,{'agent-console-collector-a-serve.service':3}),[],'one automatic restart is not a loop');
+ assert.deepEqual(t.online('collector-a',[probe],T0+110000,{'agent-console-collector-a-serve.service':3}),[],'80 s after it was first seen the probe is still within the window');
+ assert.deepEqual(t.online('collector-a',[],T0+120000,{'agent-console-collector-a-serve.service':3}),[],'no recovery for an incident that never alerted');
+ assert.deepEqual(t.snapshot()['collector-a'].active,[]);
 });
 test('an item still unhealthy after its grace window alerts once and recovers once',()=>{
- const t=createTracker();t.online('sympoies',[],T0);
- for(let at=T0+20000;at<T0+110000;at+=20000)assert.deepEqual(t.online('sympoies',[probe],at),[]);
- const raised=t.online('sympoies',[probe],T0+110000);assert.deepEqual(types(raised),[['attention','probe','Agent Console speech']]);assert.equal(raised[0].detail,'Endpoint unavailable');
- assert.deepEqual(t.online('sympoies',[probe],T0+130000),[]);
- assert.deepEqual(types(t.online('sympoies',[],T0+150000)),[['recovered','probe','Agent Console speech']]);
- const zero=createTracker({graceMs:0});zero.online('c8',[],T0);assert.deepEqual(types(zero.online('c8',[restarting],T0+1)),[['attention','service','agent-console-c8-serve.service']],'a zero window alerts on first sight');
+ const t=createTracker();t.online('server',[],T0);
+ for(let at=T0+20000;at<T0+110000;at+=20000)assert.deepEqual(t.online('server',[probe],at),[]);
+ const raised=t.online('server',[probe],T0+110000);assert.deepEqual(types(raised),[['attention','probe','Agent Console speech']]);assert.equal(raised[0].detail,'Endpoint unavailable');
+ assert.deepEqual(t.online('server',[probe],T0+130000),[]);
+ assert.deepEqual(types(t.online('server',[],T0+150000)),[['recovered','probe','Agent Console speech']]);
+ const zero=createTracker({graceMs:0});zero.online('collector-a',[],T0);assert.deepEqual(types(zero.online('collector-a',[restarting],T0+1)),[['attention','service','agent-console-collector-a-serve.service']],'a zero window alerts on first sight');
 });
 test('the grace window can be set per item',()=>{
- const t=createTracker({graceMs:(host:string,a:Attention)=>host==='sympoies'&&a.kind==='probe'&&a.title==='Agent Console speech'?180000:90000});
- t.online('sympoies',[],T0);t.online('sympoies',[probe,stopped],T0+20000);
- assert.deepEqual(types(t.online('sympoies',[probe,stopped],T0+120000)),[['attention','service','web.service']]);
- assert.deepEqual(t.online('sympoies',[probe,stopped],T0+190000),[]);
- assert.deepEqual(types(t.online('sympoies',[probe,stopped],T0+200000)),[['attention','probe','Agent Console speech']]);
+ const t=createTracker({graceMs:(host:string,a:Attention)=>host==='server'&&a.kind==='probe'&&a.title==='Agent Console speech'?180000:90000});
+ t.online('server',[],T0);t.online('server',[probe,stopped],T0+20000);
+ assert.deepEqual(types(t.online('server',[probe,stopped],T0+120000)),[['attention','service','web.service']]);
+ assert.deepEqual(t.online('server',[probe,stopped],T0+190000),[]);
+ assert.deepEqual(types(t.online('server',[probe,stopped],T0+200000)),[['attention','probe','Agent Console speech']]);
 });
 test('automatic restarts counted by systemd alert as a restart loop even when no collection sees the unit down',()=>{
- const t=createTracker(),name='agent-console-c8-serve.service',at=(m:number)=>T0+m*60000;t.online('c8',[],at(0),{[name]:7});
- assert.deepEqual(t.online('c8',[],at(2),{[name]:8}),[]);assert.deepEqual(t.online('c8',[],at(4),{[name]:9}),[]);
- const loop=t.online('c8',[],at(6),{[name]:10});assert.deepEqual(types(loop),[['attention','service',name]]);assert.equal(loop[0].severity,'error');assert.equal(loop[0].detail,'restart loop · 3 restarts in 10 min');
- assert.deepEqual(t.online('c8',[],at(8),{[name]:11}),[],'further restarts extend the same incident');
- assert.deepEqual(t.online('c8',[],at(17),{[name]:11}),[],'the incident stays open until a full window passes without a restart');
- assert.deepEqual(types(t.online('c8',[],at(18),{[name]:11})),[['recovered','service',name]]);
+ const t=createTracker(),name='agent-console-collector-a-serve.service',at=(m:number)=>T0+m*60000;t.online('collector-a',[],at(0),{[name]:7});
+ assert.deepEqual(t.online('collector-a',[],at(2),{[name]:8}),[]);assert.deepEqual(t.online('collector-a',[],at(4),{[name]:9}),[]);
+ const loop=t.online('collector-a',[],at(6),{[name]:10});assert.deepEqual(types(loop),[['attention','service',name]]);assert.equal(loop[0].severity,'error');assert.equal(loop[0].detail,'restart loop · 3 restarts in 10 min');
+ assert.deepEqual(t.online('collector-a',[],at(8),{[name]:11}),[],'further restarts extend the same incident');
+ assert.deepEqual(t.online('collector-a',[],at(17),{[name]:11}),[],'the incident stays open until a full window passes without a restart');
+ assert.deepEqual(types(t.online('collector-a',[],at(18),{[name]:11})),[['recovered','service',name]]);
 });
 test('a counter reset by a manual restart and the first counter seen are not restarts',()=>{
- const t=createTracker(),name='agent-console-speech.service';t.online('sympoies',[],T0,{[name]:40});
- assert.deepEqual(t.online('sympoies',[],T0+60000,{[name]:0}),[]);assert.deepEqual(t.online('sympoies',[],T0+120000,{[name]:1}),[]);
- assert.deepEqual(t.online('sympoies',[],T0+180000,{[name]:1,'new.service':5}),[]);
- assert.deepEqual(types(t.online('sympoies',[],T0+240000,{[name]:3})),[['attention','service',name]],'1 then 2 more: three restarts');
+ const t=createTracker(),name='agent-console-speech.service';t.online('server',[],T0,{[name]:40});
+ assert.deepEqual(t.online('server',[],T0+60000,{[name]:0}),[]);assert.deepEqual(t.online('server',[],T0+120000,{[name]:1}),[]);
+ assert.deepEqual(t.online('server',[],T0+180000,{[name]:1,'new.service':5}),[]);
+ assert.deepEqual(types(t.online('server',[],T0+240000,{[name]:3})),[['attention','service',name]],'1 then 2 more: three restarts');
 });
 test('a restart seen both as a failed unit and as a counter step counts once',()=>{
- const t=createTracker(),name='agent-console-c8-serve.service',at=(s:number)=>T0+s*1000;t.online('c8',[],at(0),{[name]:0});
+ const t=createTracker(),name='agent-console-collector-a-serve.service',at=(s:number)=>T0+s*1000;t.online('collector-a',[],at(0),{[name]:0});
  for(let cycle=0;cycle<2;cycle++){const base=cycle*120,count=cycle;
-  assert.deepEqual(t.online('c8',[{...restarting,title:name}],at(base+30),{[name]:count}),[]);
-  assert.deepEqual(t.online('c8',[],at(base+60),{[name]:count+1}),[]);}
- assert.deepEqual(t.snapshot().c8.active,[],'two restarts are not a loop');
+  assert.deepEqual(t.online('collector-a',[{...restarting,title:name}],at(base+30),{[name]:count}),[]);
+  assert.deepEqual(t.online('collector-a',[],at(base+60),{[name]:count+1}),[]);}
+ assert.deepEqual(t.snapshot()['collector-a'].active,[],'two restarts are not a loop');
 });
 test('an item without a restart counter that keeps failing and recovering alerts as flapping',()=>{
- const t=createTracker();t.online('sympoies',[],T0);
- for(const m of [1,3])assert.deepEqual([...t.online('sympoies',[probe],T0+m*60000),...t.online('sympoies',[],T0+m*60000+20000)],[]);
- const flap=t.online('sympoies',[probe],T0+5*60000);assert.deepEqual(types(flap),[['attention','probe','Agent Console speech']]);assert.equal(flap[0].detail,'flapping · 3 failures in 10 min');
- assert.deepEqual(t.online('sympoies',[],T0+5*60000+20000),[],'a flapping incident stays open while failures continue');
- assert.deepEqual(t.online('sympoies',[],T0+11*60000+20000),[]);
- assert.deepEqual(types(t.online('sympoies',[],T0+15*60000)),[['recovered','probe','Agent Console speech']]);
+ const t=createTracker();t.online('server',[],T0);
+ for(const m of [1,3])assert.deepEqual([...t.online('server',[probe],T0+m*60000),...t.online('server',[],T0+m*60000+20000)],[]);
+ const flap=t.online('server',[probe],T0+5*60000);assert.deepEqual(types(flap),[['attention','probe','Agent Console speech']]);assert.equal(flap[0].detail,'flapping · 3 failures in 10 min');
+ assert.deepEqual(t.online('server',[],T0+5*60000+20000),[],'a flapping incident stays open while failures continue');
+ assert.deepEqual(t.online('server',[],T0+11*60000+20000),[]);
+ assert.deepEqual(types(t.online('server',[],T0+15*60000)),[['recovered','probe','Agent Console speech']]);
 });
 test('items found on the first observation are a silent baseline that also recovers silently',()=>{
- const t=createTracker();assert.deepEqual(t.online('c8',[stopped],T0),[]);assert.deepEqual(t.online('c8',[stopped],T0+300000),[]);
- assert.deepEqual(t.online('c8',[],T0+320000),[]);
- const restored=createTracker({state:{c8:{active:[],baseline:[stopped]}}});assert.deepEqual(restored.online('c8',[],T0),[]);
- const notified=createTracker({state:{c8:{active:[stopped]}}});assert.deepEqual(types(notified.online('c8',[],T0)),[['recovered','service','web.service']]);
+ const t=createTracker();assert.deepEqual(t.online('collector-a',[stopped],T0),[]);assert.deepEqual(t.online('collector-a',[stopped],T0+300000),[]);
+ assert.deepEqual(t.online('collector-a',[],T0+320000),[]);
+ const restored=createTracker({state:{'collector-a':{active:[],baseline:[stopped]}}});assert.deepEqual(restored.online('collector-a',[],T0),[]);
+ const notified=createTracker({state:{'collector-a':{active:[stopped]}}});assert.deepEqual(types(notified.online('collector-a',[],T0)),[['recovered','service','web.service']]);
 });
 test('grace and restart-loop settings are validated server options',async()=>{
  for(const alerts of [{graceSeconds:-1},{graceSeconds:'90'},{graceSeconds:3601},{restartLoop:{restarts:1,windowSeconds:600}},{restartLoop:{restarts:3,windowSeconds:0}},{restartLoop:{restarts:3}},
   {graceOverrides:[{kind:'probe',title:'x'}]},{graceOverrides:[{kind:'Probe',title:'x',graceSeconds:60}]},{graceOverrides:[{host:'other',kind:'probe',title:'x',graceSeconds:60}]},{graceOverrides:{}}])
   assert.throws(()=>createMonitor({hosts:[host],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',...alerts}}),/invalid-alerts/,JSON.stringify(alerts));
- createMonitor({hosts:[host],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',graceSeconds:0,restartLoop:{restarts:0,windowSeconds:600},graceOverrides:[{host:'c8',kind:'probe',title:'web API',graceSeconds:180}]}});
+ createMonitor({hosts:[host],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',graceSeconds:0,restartLoop:{restarts:0,windowSeconds:600},graceOverrides:[{host:'collector-a',kind:'probe',title:'web API',graceSeconds:180}]}});
 });
 test('the monitor applies the grace window, per-item overrides and systemd restart counters end to end',async()=>{
  let clock=T0,attention:Attention[]=[],restarts=0;const {calls,fetchImpl}=recorder();
- const services=()=>[{name:'agent-console-c8-serve.service',scope:'user',health:'ok',restarts}];
- const config={hosts:[host],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',graceOverrides:[{host:'c8',kind:'probe',title:'slow API',graceSeconds:300}]}};
+ const services=()=>[{name:'agent-console-collector-a-serve.service',scope:'user',health:'ok',restarts}];
+ const config={hosts:[host],alerts:{webhookUrl:'http://127.0.0.1:8000/notify',graceOverrides:[{host:'collector-a',kind:'probe',title:'slow API',graceSeconds:300}]}};
  const monitor=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify({...snap(clock,attention),services:services()})})});
  const step=async(seconds:number)=>{clock+=seconds*1000;await monitor.refresh();};
  await monitor.refresh();attention=[restarting];await step(20);attention=[];restarts=1;await step(20);await monitor.idle();
  assert.equal(calls.length,0,'a 5 s self-healing restart sends nothing');
  attention=[{...probe,title:'slow API'},stopped];for(let i=0;i<6;i++)await step(20);await monitor.idle();
- assert.deepEqual(calls.map(c=>[c.body.title,c.body.body]),[['[host-monitor] c8: service needs attention','web.service — user · inactive · success']]);
+ assert.deepEqual(calls.map(c=>[c.body.title,c.body.body]),[['[host-monitor] collector-a: service needs attention','web.service — user · inactive · success']]);
  attention=[];restarts=3;await step(20);await monitor.idle();
- assert.deepEqual(calls.slice(1).map(c=>[c.body.title,c.body.body]),[['[host-monitor] c8: service needs attention','agent-console-c8-serve.service — restart loop · 3 restarts in 10 min'],['[host-monitor] c8: service recovered','web.service']]);
+ assert.deepEqual(calls.slice(1).map(c=>[c.body.title,c.body.body]),[['[host-monitor] collector-a: service needs attention','agent-console-collector-a-serve.service — restart loop · 3 restarts in 10 min'],['[host-monitor] collector-a: service recovered','web.service']]);
  monitor.stop();
 });
 test('a steady restart loop is one incident, not an alert and a recovery per restart',()=>{
- const t=createTracker(),name='agent-console-c8-serve.service';let count=0;const events=[];t.online('c8',[],T0,{[name]:count});
- for(let at=T0+20000;at<=T0+3600000;at+=20000){if((at-T0)%240000===0)count++;events.push(...t.online('c8',[],at,{[name]:count}));}
+ const t=createTracker(),name='agent-console-collector-a-serve.service';let count=0;const events=[];t.online('collector-a',[],T0,{[name]:count});
+ for(let at=T0+20000;at<=T0+3600000;at+=20000){if((at-T0)%240000===0)count++;events.push(...t.online('collector-a',[],at,{[name]:count}));}
  assert.deepEqual(events.map(e=>[e.type,e.at]),[['attention',new Date(T0+720000).toISOString()]]);
 });
 test('restart counters are a fresh baseline after a gap longer than the loop window',()=>{
- const t=createTracker({offlineAfterMs:0}),name='agent-console-c8-serve.service';t.online('m4',[],T0,{[name]:1});
- for(let m=1;m<=40;m++)t.offline('m4',T0+m*60000);
- assert.deepEqual(t.online('m4',[],T0+41*60000,{[name]:4}),[],'three restarts spread over 40 min offline are not a loop');
- assert.deepEqual(t.online('m4',[],T0+42*60000,{[name]:5}),[]);
+ const t=createTracker({offlineAfterMs:0}),name='agent-console-collector-a-serve.service';t.online('collector-b',[],T0,{[name]:1});
+ for(let m=1;m<=40;m++)t.offline('collector-b',T0+m*60000);
+ assert.deepEqual(t.online('collector-b',[],T0+41*60000,{[name]:4}),[],'three restarts spread over 40 min offline are not a loop');
+ assert.deepEqual(t.online('collector-b',[],T0+42*60000,{[name]:5}),[]);
 });
 test('a baseline item that clears is saved, so after a restart its return still alerts',async()=>{
  const dir=await tmp();try{
@@ -225,8 +225,8 @@ test('a baseline item that clears is saved, so after a restart its return still 
   const config={hosts:[host],stateDir:dir,alerts:{webhookUrl:'http://127.0.0.1:8000/notify'}};
   const options=()=>({now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify(snap(clock,attention))})});
   const first=createMonitor(config,options());await first.refresh();attention=[];clock+=20000;await first.refresh();await first.idle();first.stop();
-  assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'alert-state.json'),'utf8')),{c8:{active:[],offlineAlerted:false}});
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'alert-state.json'),'utf8')),{'collector-a':{active:[],offlineAlerted:false}});
   attention=[stopped];const second=createMonitor(config,options());await second.refresh();clock+=100000;await second.refresh();await second.idle();second.stop();
-  assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] c8: service needs attention']);
+  assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] collector-a: service needs attention']);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
