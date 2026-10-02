@@ -85,7 +85,7 @@ function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))se
  for(const a of s.attention){const notice=el('div',a.title,'notice '+a.severity);if(a.detail)notice.append(el('span',a.detail));$('attention').append(notice);}if(!s.attention.length)$('attention').append(el('div',h.status==='online'&&!h.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(h.status==='online'&&!h.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
  const uptime=`${Math.floor(s.hardware.uptime/86400)} 天 ${Math.floor(s.hardware.uptime%86400/3600)} 小時`;
- if(s.agentless){metric('資源指標','未安裝 collector','此主機只以 ssh 讀取基本資訊，不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));}
+ if(s.agentless){metric('資源指標','未安裝 collector','僅 ssh 基本資訊：不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));}
  else if(externalResources(s)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${s.hardware.cpuCount} CPU · 核心 ${s.hardware.kernel}`);$('disks').append(el('div','此主機的磁碟容量由 Beszel 監控','check'));
   // The server reads the latest Beszel stats; a failed read keeps the last disks and says when they were read.
   const bz=h.beszel;if(bz){const note=el('div',bz.status==='ok'?'磁碟容量來自 Beszel':bz.status==='stale'?'Beszel 資料已過期':'Beszel 暫時讀不到','check');

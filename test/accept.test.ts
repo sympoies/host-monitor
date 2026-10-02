@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
-import {resourceExpectation,EXTERNAL_RESOURCE_TEXT} from '../scripts/accept-expectations.ts';
+import {resourceExpectation,EXTERNAL_RESOURCE_TEXT,AGENTLESS_TEXT} from '../scripts/accept-expectations.ts';
 // A /api/fleet payload with one host of each resources state, as the browser acceptance reads it.
 const fleet=JSON.parse(fs.readFileSync(path.join(import.meta.dirname,'fixtures','fleet-mixed.json'),'utf8'));
 const snapshot=(name:string)=>fleet.hosts.find((h:{name:string})=>h.name===name).snapshot;
@@ -11,6 +11,11 @@ test('an external-resource host expects the Beszel pointer: two metrics and a di
 });
 test('an agentless host expects its own pointer and no service inventory',()=>{
  assert.deepEqual(resourceExpectation({resources:'external',agentless:true}),{resources:'agentless',metrics:2,diskRows:false,text:'僅 ssh 基本資訊'});
+});
+test('the dashboard renders the text the agentless expectation looks for, in the resources and disks panels',()=>{
+ const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
+ assert.ok(app.includes(`metric('資源指標','未安裝 collector','${AGENTLESS_TEXT}`));
+ assert.ok(app.includes(`'${AGENTLESS_TEXT}：不採集磁碟容量'`));
 });
 test('a snapshot without the optional resources field is treated as collected, like the dashboard',()=>{
  assert.equal(resourceExpectation(snapshot('linux-legacy')).resources,'collected');
