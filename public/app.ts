@@ -1,4 +1,4 @@
-import {loadOrder,saveOrder,clearOrder,moveHost} from './order.js';
+import {loadOrder,saveOrder,clearOrder,moveHost,mergeVisibleOrder} from './order.js';
 import {DEFAULT_TAB_ORDER,loadTabState,saveTabState,clearTabState,moveTab,moveVisibleTab} from './tabs.js';
 // Types for the read-only JSON API this page renders; the server's projection keeps only these fields.
 interface Attention{severity:string;kind:string;title:string;detail?:string}
@@ -26,9 +26,10 @@ function selectedFilter(key:string){return sectionFilter.get(key)??'all';}
 function drawFilterTabs(id:string,label:string,items:{id:string;label:string;count:number}[],selected:string,onSelect:(id:string)=>void,always=false){
  const root=$(id);root.replaceChildren();const categories=items.filter(item=>item.id!=='all'&&item.count>0);root.hidden=!always&&categories.length<2;if(root.hidden)return;
  root.setAttribute('role','tablist');root.setAttribute('aria-label',label);
- for(const item of (always?items:items.filter(option=>option.id==='all'||option.count>0))){const button=el('button',undefined,'filter-tab') as HTMLButtonElement;button.type='button';button.setAttribute('role','tab');button.setAttribute('aria-selected',String(item.id===selected));button.tabIndex=item.id===selected?0:-1;button.append(document.createTextNode(item.label));const count=el('span',String(item.count),'filter-count');count.setAttribute('aria-hidden','true');button.append(count);button.setAttribute('aria-label',`${item.label} ${item.count}`);button.addEventListener('click',()=>onSelect(item.id));button.addEventListener('keydown',event=>{
+ for(const item of (always?items:items.filter(option=>option.id==='all'||option.count>0))){const button=el('button',undefined,'filter-tab') as HTMLButtonElement;button.type='button';button.dataset.filter=item.id;button.setAttribute('role','tab');button.setAttribute('aria-selected',String(item.id===selected));button.tabIndex=item.id===selected?0:-1;button.append(document.createTextNode(item.label));const count=el('span',String(item.count),'filter-count');count.setAttribute('aria-hidden','true');button.append(count);button.setAttribute('aria-label',`${item.label} ${item.count}`);button.addEventListener('click',()=>onSelect(item.id));button.addEventListener('keydown',event=>{
   const tabs=[...root.querySelectorAll<HTMLButtonElement>('[role=tab]')],index=tabs.indexOf(button),next=event.key==='ArrowRight'?index+1:event.key==='ArrowLeft'?index-1:event.key==='Home'?0:event.key==='End'?tabs.length-1:-1;
-  if(next<0)return;event.preventDefault();const target=tabs[(next+tabs.length)%tabs.length];target.focus();target.click();
+  if(next<0)return;event.preventDefault();const target=tabs[(next+tabs.length)%tabs.length],targetId=target.dataset.filter;target.focus();target.click();
+  const replacement=[...root.querySelectorAll<HTMLButtonElement>('[role=tab]')].find(tab=>tab.dataset.filter===targetId)??root.querySelector<HTMLButtonElement>('[role=tab][aria-selected="true"]');replacement?.focus();
  });root.append(button);}
 }
 const el=(tag:string,text?:string,className?:string)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;};
@@ -75,7 +76,7 @@ function agentMark(name:string){
  return mark;
 }
 function renderSessions(host:HostView){
- const panel=$('agent-sessions');panel.replaceChildren();const sessionFilters=$('agent-session-filters');sessionFilters.replaceChildren();sessionFilters.hidden=true;const inventory=host.snapshot?.agentSessions;
+ const panel=$('agent-sessions'),openDetails=new Set([...panel.querySelectorAll<HTMLElement>('.agent-session')].filter(row=>(row.querySelector('details') as HTMLDetailsElement|null)?.open).map(row=>row.dataset.sessionKey).filter((key):key is string=>Boolean(key)));panel.replaceChildren();const sessionFilters=$('agent-session-filters');sessionFilters.replaceChildren();sessionFilters.hidden=true;const inventory=host.snapshot?.agentSessions;
  if(inventory?.status==='disabled'){panel.append(el('p','此主機未啟用 agent session 採集','session-note'));return;}
  if(inventory?.status!=='ok'){panel.append(el('p','Agent sessions 無法確認；尚未取得可用的本機清單','session-note'));return;}
  const retained=host.status!=='online'||host.stale;
@@ -85,14 +86,15 @@ function renderSessions(host:HostView){
  const sorted=[...inventory.sessions].sort((a,b)=>(phaseRank[a.phase]??4)-(phaseRank[b.phase]??4)||(Date.parse(b.lastActivityAt??'')||0)-(Date.parse(a.lastActivityAt??'')||0)||(a.title??'').localeCompare(b.title??''));
  for(const session of sorted){
   const row=el('article',undefined,'agent-session'),header=el('div',undefined,'session-header'),phase=el('span',(retained?'最後已知 · ':'')+(phaseLabel[session.phase]??phaseLabel.unknown),'session-phase phase-'+(retained?'stale':session.phase in phaseLabel?session.phase:'unknown'));
+  row.dataset.sessionKey=JSON.stringify([host.name,session.agent,session.createdAt??'',session.title??'',session.repoName??'']);
   header.append(phase);
   if(session.label||session.role){const label=session.label||session.role||'Other',badge=el('span',label,'session-role role-'+roleTone(session.label,session.role));badge.title=label;header.append(badge);}
  header.append(agentMark(session.agent));row.dataset.phase=session.phase;row.hidden=sessionFilter==='working'?session.phase!=='working':sessionFilter==='waiting'?!['waiting','idle'].includes(session.phase):false;row.append(header,el('div',session.title??'未命名 session','session-title'),el('div',session.repoName??'Repo 無法確認','session-repo'),el('div','活動 '+age(session.lastActivityAt),'session-activity'));
-  const details=el('details',undefined,'session-extra'),summary=el('summary','更多資訊'),detailRows=el('div',undefined,'session-details');
+  const details=el('details',undefined,'session-extra') as HTMLDetailsElement,summary=el('summary','更多資訊'),detailRows=el('div',undefined,'session-details');
   for(const value of [`建立 ${age(session.createdAt)}`,`帳號 ${session.account??'無法確認'}${session.accountState?' · '+session.accountState:''}`,`未讀 ${session.unreadMessageCount??'無法確認'}`])detailRows.append(el('span',value));
   if(session.selectedAccount&&session.selectedAccount!==session.account)detailRows.append(el('span','選定帳號 '+session.selectedAccount));
   const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?'lineage depth '+session.lineageDepth:'',session.resumable!==undefined?'resumable '+session.resumable:'',session.updatedAt?'更新 '+age(session.updatedAt):''].filter(Boolean);
-  details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
+  details.open=openDetails.has(row.dataset.sessionKey??'');details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
  }
 }
 function important(s:Row,markers:string[]=[]){return s.required||markers.some(m=>s.name.includes(m))||s.health==='error';}
@@ -126,7 +128,7 @@ function rows(){if(!fleet)return;const host=fleet.hosts.find(h=>h.name===selecte
 const hostOrder=(defaults:string[])=>loadOrder(storage(),defaults);
 const slots=()=>[...$('hosts').children] as HTMLElement[];
 const currentOrder=()=>slots().map(n=>n.dataset.host as string);
-function reorder(defaults:string[],order:string[]){if(order.join()===defaults.join())clearOrder(storage());else saveOrder(storage(),order);render();}
+function reorder(defaults:string[],order:string[]){const complete=mergeVisibleOrder(hostOrder(defaults),order);if(complete.join()===defaults.join())clearOrder(storage());else saveOrder(storage(),complete);render();}
 const tabLabels:Record<string,string>={resources:'資源指標',disks:'磁碟容量',checks:'功能檢查與最近錯誤',events:'最近事件',agents:'Agent sessions',services:'服務'};
 const tabPanels:Record<string,string>={resources:'resource-panel',disks:'disk-panel',checks:'checks-panel',events:'events-panel',agents:'agents-panel',services:'services-panel'};
 function visibleTabs(host:HostView){
@@ -139,7 +141,7 @@ function visibleTabs(host:HostView){
 }
 function saveTabs(){saveTabState(storage(),{order:tabState.order,selected:preferredTab});}
 function renderTabs(host:HostView){
- const visible=visibleTabs(host),ordered=tabState.order.filter(id=>visible.includes(id)),active=visible.includes(preferredTab)?preferredTab:ordered[0]??'resources',root=$('host-tabs');root.replaceChildren();
+ const focusedTab=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('#host-tabs [role=tab]')?.dataset.tab,visible=visibleTabs(host),ordered=tabState.order.filter(id=>visible.includes(id)),active=visible.includes(preferredTab)?preferredTab:ordered[0]??'resources',root=$('host-tabs');root.replaceChildren();
  for(const id of ordered){const tab=el('button',tabLabels[id],'host-tab') as HTMLButtonElement;tab.id='tab-'+id;tab.type='button';tab.setAttribute('role','tab');tab.setAttribute('aria-controls',tabPanels[id]);tab.setAttribute('aria-selected',String(id===active));tab.tabIndex=id===active?0:-1;tab.draggable=true;tab.dataset.tab=id;
   tab.addEventListener('click',()=>{preferredTab=id;tabState.selected=id;saveTabs();renderTabs(host);($('tab-'+id) as HTMLButtonElement).focus();});
   tab.addEventListener('keydown',event=>{const at=ordered.indexOf(id),next=event.key==='ArrowRight'?at+1:event.key==='ArrowLeft'?at-1:event.key==='Home'?0:event.key==='End'?ordered.length-1:-1;if(next<0)return;event.preventDefault();const target=ordered[(next+ordered.length)%ordered.length];preferredTab=target;tabState.selected=target;saveTabs();renderTabs(host);($('tab-'+target) as HTMLButtonElement).focus();});
@@ -151,8 +153,9 @@ function renderTabs(host:HostView){
  for(const id of DEFAULT_TAB_ORDER){const panel=$(tabPanels[id]);panel.hidden=!visible.includes(id)||id!==active;panel.setAttribute('aria-hidden',String(panel.hidden));}
  const menu=document.querySelector('.tab-order-menu') as HTMLDetailsElement,left=$('move-tab-left') as HTMLButtonElement,right=$('move-tab-right') as HTMLButtonElement;menu.hidden=ordered.length<2;left.disabled=ordered.indexOf(active)<=0;right.disabled=ordered.indexOf(active)>=ordered.length-1;
  $('reset-tab-order').hidden=tabState.order.join()===DEFAULT_TAB_ORDER.join();
+ if(focusedTab&&ordered.includes(focusedTab))($('tab-'+focusedTab) as HTMLButtonElement).focus();
 }
-function moveSelectedTab(delta:number){const host=fleet?.hosts.find(item=>item.name===selected);if(!host)return;const visible=visibleTabs(host),active=visible.includes(preferredTab)?preferredTab:visible[0];if(!active)return;const next=moveVisibleTab(tabState.order,visible,active,delta);if(next.join()===tabState.order.join())return;tabState.order=next;preferredTab=active;tabState.selected=active;saveTabs();renderTabs(host);($('tab-'+active) as HTMLButtonElement).focus();}
+function moveSelectedTab(delta:number){const host=fleet?.hosts.find(item=>item.name===selected);if(!host)return;const available=visibleTabs(host),visible=tabState.order.filter(id=>available.includes(id)),active=visible.includes(preferredTab)?preferredTab:visible[0];if(!active)return;const next=moveVisibleTab(tabState.order,visible,active,delta);if(next.join()===tabState.order.join())return;tabState.order=next;preferredTab=active;tabState.selected=active;saveTabs();renderTabs(host);($('tab-'+active) as HTMLButtonElement).focus();}
 function renderFleetFilters(hosts:HostView[]){
  const category=(host:HostView):'normal'|'attention'|'offline'=>host.status!=='online'||host.stale?'offline':host.snapshot?.attention.length?'attention':'normal',counts={normal:0,attention:0,offline:0};for(const host of hosts)counts[category(host)]++;
  if(!counts[fleetFilter as keyof typeof counts])fleetFilter='all';

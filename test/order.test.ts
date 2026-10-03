@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {once} from 'node:events';import net from 'node:net';
-import {mergeOrder,loadOrder,saveOrder,clearOrder,moveHost} from '../public/order.ts';import {createMonitor} from '../src/server.ts';
+import {mergeOrder,loadOrder,saveOrder,clearOrder,moveHost,mergeVisibleOrder} from '../public/order.ts';import {createMonitor} from '../src/server.ts';
 const defaults=['a','b','c','d'];
 const memory=(initial?:string)=>{let value=initial;return {getItem:()=>value??null,setItem:(_:string,v:string)=>{value=v;},removeItem:()=>{value=undefined;},peek:()=>value};};
 const broken={getItem:()=>{throw new Error('denied');},setItem:()=>{throw new Error('denied');},removeItem:()=>{throw new Error('denied');}};
@@ -24,6 +24,10 @@ test('moving a host places it at the target index or by one step and clamps at t
  assert.deepEqual(moveHost(defaults,'a',-1),['a','b','c','d']);
  assert.deepEqual(moveHost(defaults,'a',99),['b','c','d','a']);
  assert.deepEqual(moveHost(defaults,'zzz',1),defaults);
+});
+test('reordering a filtered subset preserves hidden hosts in their saved slots',()=>{
+ assert.deepEqual(mergeVisibleOrder(['a','b','c'],['c','a']),['c','b','a']);
+ assert.deepEqual(mergeVisibleOrder(['a','b','c','d'],['a','d']),['a','b','c','d']);
 });
 const host=(name:string)=>({name,ssh:name,node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'});
 async function fleet(config:object){const m=createMonitor({hosts:['a','b','c'].map(host),...config} as any,{run:async()=>{throw Error('x');}});m.server.listen(0,'127.0.0.1');await once(m.server,'listening');

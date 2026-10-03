@@ -22,3 +22,8 @@ export function moveHost(order:string[],name:string,index:number):string[] {
  if(!order.includes(name))return order;
  const rest=order.filter(n=>n!==name);rest.splice(Math.max(0,Math.min(rest.length,index)),0,name);return rest;
 }
+// Reorder the visible subset in-place while leaving filtered-out hosts in their saved slots.
+export function mergeVisibleOrder(order:string[],visibleOrder:string[]):string[] {
+ const visible=new Set(visibleOrder);let next=0;
+ return order.map(name=>visible.has(name)?visibleOrder[next++]:name);
+}
