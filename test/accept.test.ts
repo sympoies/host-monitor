@@ -38,3 +38,10 @@ test('an Android device collects its own resources: four metrics (battery, tempe
  const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
  for(const label of ['電池電量','電池溫度','記憶體使用率','/data 儲存空間'])assert.ok(app.includes(`metric('${label}'`),label);
 });
+test('dashboard panels place checks and recent events immediately after disk capacity, in order',()=>{
+ const html=fs.readFileSync(path.join(import.meta.dirname,'..','public','index.html'),'utf8');
+ const panels=[...html.matchAll(/<section\b[^>]*class="panel"[^>]*>([\s\S]*?)<\/section>/g)]
+  .map(([,panel])=>panel.match(/<h2\b[^>]*>([^<]+)<\/h2>/)?.[1]);
+ const disk=panels.indexOf('磁碟容量');
+ assert.deepEqual(panels.slice(disk,disk+3),['磁碟容量','功能檢查與最近錯誤','最近事件']);
+});
