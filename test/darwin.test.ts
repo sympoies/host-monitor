@@ -89,7 +89,8 @@ test('a macOS snapshot reports launchd services, log counts and external resourc
  const s=await collect(config,{platform:'darwin',hostname:'MacBook.local',uid:501,run,stream});
  assert.equal(s.schemaVersion,1);assert.equal(s.host,'collector-b');assert.equal(s.platform,'darwin');assert.equal(s.resources,'external');
  assert.deepEqual(s.collectionIssues,[]);assert.equal(s.memory,undefined);assert.equal(s.disks,undefined);assert.deepEqual(s.failedUnits,[]);
- assert.ok(calls.every(c=>c.startsWith('launchctl print ')));
+ assert.ok(calls.every(c=>c.startsWith('launchctl print ')||c==='agent-session list --format json'));
+ assert.equal(calls.filter(c=>c==='agent-session list --format json').length,1);assert.equal(s.agentSessions?.status,'unknown');
  assert.deepEqual(s.attention.map(a=>[a.kind,a.title]),[['service','com.example.broken'],['journal','com.example.tunnel'],['journal','org.example.daemon']]);
  const projected=projectSnapshot(JSON.parse(JSON.stringify(s)));
  assert.equal(projected.platform,'darwin');assert.equal(projected.resources,'external');assert.equal(projected.services[0].manager,'launchd');assert.equal(projected.journalErrors[0].process,'ssh');

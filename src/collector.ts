@@ -1,3 +1,5 @@
+import {collectSessions} from './sessions.ts';
+import type {SessionConfig} from './sessions.ts';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import {execFile,spawn} from 'node:child_process';
@@ -7,7 +9,7 @@ import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFo
 import type {Service,FailedUnit,JournalEntry,Snapshot,LaunchdJob,LaunchdRow} from './model.ts';
 export type Run=(bin:string,args:string[])=>Promise<string>;
 export type Stream=(bin:string,args:string[],onLine:(line:string)=>void,options?:{timeout?:number;maxLines?:number})=>Promise<void>;
-export interface HostConfig{name:string;identity?:string;required?:{user?:string[];system?:string[]};probes?:{name:string;url:string}[];docker?:boolean;requiredContainers?:string[];nvidia?:boolean}
+export interface HostConfig{name:string;identity?:string;required?:{user?:string[];system?:string[]};probes?:{name:string;url:string}[];docker?:boolean;requiredContainers?:string[];nvidia?:boolean;agentSessions?:SessionConfig}
 type Scope='user'|'system';
 interface LogTarget{label:string;scope:string;process:string}
 const exec=promisify(execFile);
@@ -94,6 +96,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
  const result:Snapshot={schemaVersion:1,host:config.name,platform,resources:darwin?'external':'collected',collectedAt:new Date().toISOString(),hardware:{cpuCount:os.cpus().length,cpuModel:os.cpus()[0]?.model,load:os.loadavg(),uptime:os.uptime(),kernel:os.release()},collectionIssues:[],services:[],failedUnits:[],containers:[],journalErrors:[],probes:[],attention:[]};
  async function part<T>(name:string,fn:()=>Promise<T>,apply:(value:T)=>void){try{apply(await fn());}catch{result.collectionIssues.push(name+' unavailable');}}
  const probes=()=>(config.probes??[]).map(async probe=>{const u=loopbackProbeUrl(probe.url);try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}});
+ const sessions=collectSessions(config.agentSessions,run===command?undefined:async(bin,args)=>run(bin,args));
  const scopes:Scope[]=['system','user'];
  await Promise.all(darwin?[
   (async()=>{const byScope:Partial<Record<Scope,LogTarget[]>>={};await Promise.all((['user','system'] as Scope[]).map(scope=>part(scope+' services',()=>collectLaunchd(scope,config.required?.[scope]??[],{uid,run}),v=>{result.services.push(...v.services);byScope[scope]=v.logTargets;})));
@@ -113,6 +116,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
   ...(config.nvidia?[part('GPU',gpu,v=>result.gpus=v)]:[]),
   ...probes(),
  ]);
+ result.agentSessions=await sessions;
  for(const name of config.requiredContainers??[]){const c=result.containers.find(c=>c.name===name);if(!c)result.containers.push({name,image:'Configured service',state:'missing',status:'Container missing',health:'unhealthy'});else if(c.state!=='running')c.health='unhealthy';}
  result.services.sort((a,b)=>a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name));result.attention=attentionFor(result);return result;
 }

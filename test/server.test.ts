@@ -121,3 +121,8 @@ test('adb host entries outside the allowlist never reach the runner',async()=>{
   assert.ok(j.hosts.every((h:any)=>h.status==='offline'&&h.snapshot===null));assert.equal(calls.length,0);
  }finally{monitor.stop();await new Promise(r=>monitor.server.close(r));}
 });
+
+test('session API independently removes command, cwd, prompt and account objects while retaining safe metadata',async()=>{
+ const input={...snapshot,agentSessions:{status:'ok',sessions:[{agent:'codex',status:'running',phase:'working',title:'Example task',account:'account-a',cwd:'private-canary',attach_command:'private-canary',ssh_attach_command:'private-canary',prompt_file:'private-canary',log_file:'private-canary',tmux_session:'private-canary',last_prompt:{text:'private-canary'},codex_account:{credential:'private-canary'}}]}};
+ await running(async()=>({stdout:JSON.stringify(input)}),async(m,base)=>{await m.refresh();const response=await (await fetch(base+'/api/fleet')).text();assert.equal(response.includes('private-canary'),false);assert.deepEqual(JSON.parse(response).hosts[0].snapshot.agentSessions,{status:'ok',sessions:[{agent:'codex',status:'running',phase:'working',title:'Example task',account:'account-a'}]});});
+});
