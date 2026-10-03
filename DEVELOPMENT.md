@@ -26,6 +26,28 @@ Android devices (fleet-infra decision 0003) run no collector. The server collect
 
 The server configuration lists `hosts` (`name`, and either local `node`/`collector`/`config` paths, an `ssh` alias with remote paths, or `adb`: `{"serial": "<adb serial>"}` with an optional absolute `bin` for the adb binary, which defaults to `adb` on `PATH`; with an `ssh` alias, `bin` is required), an optional `port` and `refreshSeconds`, and optional `importantServices`: service-name substrings that the dashboard's default "important services" filter shows in addition to required, failed, and container entries. Set it server-wide or per host; a host entry's list replaces the server-wide one.
 
+### Agent sessions
+
+Each portable collector reads its own `agent-session list --format json`, using a five-second timeout, a 2 MiB output cap, and at most 5,000 records. It never queries the cross-host board. The CLI must run as the user whose sessions are being monitored. An absent CLI, failure, malformed envelope, or invalid running record produces `agentSessions: {status: "unknown", sessions: []}`; only a successful empty list means no running sessions. Session collection trouble is neutral metadata and does not create an attention event or alert. Older snapshots without the field remain unknown.
+
+The host config may set `agentSessions: {"bin": "/opt/tools/agent-session", "labelRules": [...]}`. `bin` must be an absolute executable path; without it the collector uses `agent-session` on its own PATH. Set `agentSessions: false` to disable this query explicitly (`status: "disabled"`). Android and agentless hosts never run this query, and their UI shows unknown when no session inventory exists.
+
+Snapshots include only running records. The collector and server independently allowlist agent, title, repository name, phase, role, label, timestamps (creation, update, terminal activity, phase change), effective and selected account identifiers and account state, unread count, runtime mode, coordination mode, resumability, and lineage depth. Account identifiers are display names, never credentials or full account objects. Missing values stay unknown. Only the v1 turn-state schema is interpreted; future or missing schemas yield an unknown phase. The full cwd, machine identity from the CLI, lineage identifiers, attach commands, SSH commands, tmux names, prompt/log paths, provider prompts, and transcript fields never enter snapshots, the API, events, alerts, or persistent state.
+
+`labelRules` is an ordered list of `{label, match}` objects. The first matching rule wins and every supplied selector must match. Labels and selectors belong in private infrastructure configuration. Supported exact selectors are `role`, `coordinationMode`, `repoName`, and `cwd`; `titlePrefix` and `titleContains` are case-sensitive; `cwdPrefix` matches the path itself or a child path, not a similarly named sibling. `cwd` and `cwdPrefix` may start with `~/`, resolved against the collecting user's home. `root: true` requires explicit lineage depth 0 with a null parent; `root: false` requires a positive depth with a parent. Missing or inconsistent lineage matches neither. Selectors are used locally and never sent to the server. Prefer stable cwd and lineage conditions because session titles can change.
+
+```json
+{"agentSessions":{"bin":"/opt/tools/agent-session","labelRules":[
+  {"label":"Project coordinator","match":{"cwd":"~/projects/example","root":true}},
+  {"label":"Tester","match":{"cwdPrefix":"~/projects/example/roles/tester"}},
+  {"label":"Dispatched worker","match":{"root":false}}
+]}}
+```
+
+Host cards count running, working, waiting/idle, input-needed, and unknown-phase sessions. Details sort working first, then input-needed, waiting, idle, and unknown; within each phase recent terminal activity comes first. Activity age uses the terminal activity timestamp, without guessing from update time. An offline or stale host shows the retained list as **last known**, including a retained empty list. No browser session actions are provided.
+
+Run fixture-backed acceptance with `node scripts/accept-sessions.ts <private-evidence-dir>` after `npm run build`. It launches its own headless browser against an isolated fixture server and checks desktop and 390 px layouts, escaping, counts, sorting, fields, and unknown/empty/disabled/stale/offline states. Like the live acceptance script it uses `HOST_MONITOR_PLAYWRIGHT_ROOT`; optionally set `HOST_MONITOR_CHROMIUM` to an installed Chromium executable. Playwright remains an external test tool, not a project dependency. Live installed-data acceptance remains a separate deployment gate.
+
 ### Host card order
 
 The server configuration may set `hostOrder`, a list of configured host names (each at most once). `/api/fleet` returns it as `defaultOrder`: the listed hosts first, then the remaining hosts in configuration order; without `hostOrder` that is simply the `hosts` order. The dashboard shows the cards in `defaultOrder` until the viewer reorders them: drag a card's grip (mouse or touch), or focus it and press an arrow key to move the card one place. The viewer's order is saved only in that browser's `localStorage` (key `host-monitor.hostOrder`) and never reaches the server. Hosts missing from a saved order are appended in default order, removed hosts are ignored, and unavailable or corrupt storage falls back to the default order. "重設順序" appears once a saved order differs from the default and restores it. The merge logic is `public/order.ts`, served as `/order.js`.

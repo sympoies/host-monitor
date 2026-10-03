@@ -4,7 +4,9 @@ interface Attention{severity:string;kind:string;title:string;detail?:string}
 interface Service{name:string;scope:string;health:string;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;required?:boolean}
 interface Container{name:string;image?:string;state?:string;status?:string;health?:string}
 interface Disk{source:string;type:string;total:number;used:number;available:number;percent:number;mount:string}
-interface Snapshot{platform?:string;resources?:string;agentless?:boolean;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
+interface AgentSession{agent:string;status:string;phase:string;title?:string;repoName?:string;label?:string;role?:string;createdAt?:string;updatedAt?:string;lastActivityAt?:string;phaseChangedAt?:string;account?:string;selectedAccount?:string;accountState?:string;unreadMessageCount?:number;mode?:string;coordinationMode?:string;resumable?:boolean;lineageDepth?:number}
+interface SessionInventory{status:string;sessions:AgentSession[]}
+interface Snapshot{agentSessions?:SessionInventory;platform?:string;resources?:string;agentless?:boolean;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
 interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 interface Reachability{lastSeen:string|null;nextCheck:string;checks:number}
@@ -31,6 +33,36 @@ const powerLabel:Record<string,string>={ac:'AC 供電',usb:'USB 供電',wireless
 const thermalLabel=['正常','輕微','中等','嚴重','危急','緊急','關機'];
 const celsius=(n:number)=>n.toFixed(1)+'°C';
 function hostSummary(s:Snapshot){if(s.agentless)return '僅 ssh 基本資訊';if(externalResources(s))return '資源指標：Beszel';if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;}
+const phaseLabel:Record<string,string>={working:'工作中',waiting:'等待',idle:'待命',needs_input:'需要輸入',unknown:'無法確認'};
+const phaseRank:Record<string,number>={working:0,needs_input:1,waiting:2,idle:3,unknown:4};
+function age(value:string|undefined){if(!value||!Number.isFinite(Date.parse(value)))return '無法確認';const seconds=Math.max(0,Math.floor((Date.parse(fleet?.serverTime??'')-Date.parse(value))/1000));return seconds<60?seconds+' 秒前':seconds<3600?Math.floor(seconds/60)+' 分鐘前':seconds<86400?Math.floor(seconds/3600)+' 小時前':Math.floor(seconds/86400)+' 天前';}
+function sessionSummary(host:HostView){
+ const inventory=host.snapshot?.agentSessions;
+ if(inventory?.status==='disabled')return 'Agents 未啟用';
+ if(inventory?.status!=='ok')return 'Agents 無法確認';
+ const sessions=inventory.sessions,working=sessions.filter(s=>s.phase==='working').length,waiting=sessions.filter(s=>['waiting','idle'].includes(s.phase)).length,needsInput=sessions.filter(s=>s.phase==='needs_input').length,unknown=sessions.length-working-waiting-needsInput;
+ return (host.status!=='online'||host.stale?'最後已知 ':'')+`Agents ${sessions.length} · 工作 ${working} · 等待 / 待命 ${waiting}`+(needsInput?` · 需輸入 ${needsInput}`:'')+(unknown?` · 未知 ${unknown}`:'');
+}
+function renderSessions(host:HostView){
+ const panel=$('agent-sessions');panel.replaceChildren();const inventory=host.snapshot?.agentSessions;
+ if(inventory?.status==='disabled'){panel.append(el('p','此主機未啟用 agent session 採集','session-note'));return;}
+ if(inventory?.status!=='ok'){panel.append(el('p','Agent sessions 無法確認；尚未取得可用的本機清單','session-note'));return;}
+ const retained=host.status!=='online'||host.stale;
+ panel.append(el('p',sessionSummary(host)+(retained?' · 連線或資料已過期，以下是最後已知清單':''),'session-note'));
+ if(!inventory.sessions.length){panel.append(el('p',retained?'最後已知清單沒有執行中的 agent；目前無法確認':'目前沒有執行中的 agent','session-note'));return;}
+ const sorted=[...inventory.sessions].sort((a,b)=>(phaseRank[a.phase]??4)-(phaseRank[b.phase]??4)||(Date.parse(b.lastActivityAt??'')||0)-(Date.parse(a.lastActivityAt??'')||0)||(a.title??'').localeCompare(b.title??''));
+ for(const session of sorted){
+  const row=el('article',undefined,'agent-session'),header=el('div',undefined,'session-header');
+  if(session.label)header.append(pill(session.label,'session-label'));
+  header.append(el('strong',session.agent),pill((phaseLabel[session.phase]??phaseLabel.unknown)+' · '+session.phase,session.phase==='working'?'ok':session.phase==='needs_input'?'warning':'unknown'));
+  row.append(header,el('div',session.title??'未命名 session','session-title'),el('div',session.repoName??'Repo 無法確認','session-repo'));
+  const details=el('div',undefined,'session-details');
+  for(const value of [`活動 ${age(session.lastActivityAt)}`,`建立 ${age(session.createdAt)}`,`帳號 ${session.account??'無法確認'}${session.accountState?' · '+session.accountState:''}`,`未讀 ${session.unreadMessageCount??'無法確認'}`])details.append(el('span',value));
+  if(session.selectedAccount&&session.selectedAccount!==session.account)details.append(el('span','選定帳號 '+session.selectedAccount));
+  const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?'lineage depth '+session.lineageDepth:'',session.resumable!==undefined?'resumable '+session.resumable:'',session.updatedAt?'更新 '+age(session.updatedAt):''].filter(Boolean);
+  row.append(details);if(metadata.length)row.append(el('small',metadata.join(' · '),'session-meta'));panel.append(row);
+ }
+}
 function important(s:Row,markers:string[]=[]){return s.required||markers.some(m=>s.name.includes(m))||s.health==='error';}
 function closeLog(){logRequest++;openedLog=undefined;$('log-panel').hidden=true;$('log-body').textContent='';}
 async function openLog(host:string,unit:string){
@@ -76,12 +108,12 @@ function grip(name:string,defaults:string[]){
   addEventListener('pointermove',move);addEventListener('pointerup',done);addEventListener('pointercancel',done);});
  return handle;
 }
-function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;const focused=(document.activeElement as HTMLElement|null)?.classList.contains('host-grip')?(document.activeElement as HTMLElement).parentElement?.dataset.host:undefined;$('hosts').replaceChildren();const defaults=fleet.defaultOrder??fleet.hosts.map(h=>h.name),order=hostOrder(defaults);$('reset-order').hidden=order.join()===defaults.join();for(const h of [...fleet.hosts].sort((a,b)=>order.indexOf(a.name)-order.indexOf(b.name))){const slot=el('div',undefined,'host-slot');slot.dataset.host=h.name;const good=h.status==='online'&&!h.stale,tone=!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok';const button=el('button',undefined,'host tone-'+tone+(h.name===selected?' selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',tone));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',h.reachability?`最後看到 ${time(h.reachability.lastSeen)} · 下次檢查 ${time(h.reachability.nextCheck)}`:`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.addEventListener('click',()=>{closeLog();selected=h.name;location.hash=selected;render();});slot.append(button,grip(h.name,defaults));$('hosts').append(slot);}
+function render(){if(!fleet)return;if(!fleet.hosts.some(h=>h.name===selected))selected=fleet.hosts[0]?.name;const focused=(document.activeElement as HTMLElement|null)?.classList.contains('host-grip')?(document.activeElement as HTMLElement).parentElement?.dataset.host:undefined;$('hosts').replaceChildren();const defaults=fleet.defaultOrder??fleet.hosts.map(h=>h.name),order=hostOrder(defaults);$('reset-order').hidden=order.join()===defaults.join();for(const h of [...fleet.hosts].sort((a,b)=>order.indexOf(a.name)-order.indexOf(b.name))){const slot=el('div',undefined,'host-slot');slot.dataset.host=h.name;const good=h.status==='online'&&!h.stale,tone=!good?'warning':h.snapshot?.attention.some(a=>a.severity==='error')?'error':h.snapshot?.attention.length?'warning':'ok';const button=el('button',undefined,'host tone-'+tone+(h.name===selected?' selected':''));button.setAttribute('aria-pressed',String(h.name===selected));const top=el('div',undefined,'host-top');top.append(el('span',h.name,'host-name'),pill(h.status==='loading'?'讀取中':!good?'離線 / 資料過期':h.snapshot?.attention.length?'需要關注':'正常',tone));button.append(top,el('div',h.snapshot?hostSummary(h.snapshot):'等待主機回應','host-detail'),el('div',h.reachability?`最後看到 ${time(h.reachability.lastSeen)} · 下次檢查 ${time(h.reachability.nextCheck)}`:`最近成功更新 ${time(h.lastSuccess)}`,'host-detail'));button.append(el('div',sessionSummary(h),'host-detail host-agents'));button.addEventListener('click',()=>{closeLog();selected=h.name;location.hash=selected;render();});slot.append(button,grip(h.name,defaults));$('hosts').append(slot);}
  if(focused)($('hosts').querySelector(`[data-host="${CSS.escape(focused)}"] .host-grip`) as HTMLElement|null)?.focus();
  const h=fleet.hosts.find(h=>h.name===selected);if(!h)return;const s=h.snapshot;
  if(openedLog&&(openedLog.host!==h.name||h.status!=='online'||h.stale))closeLog();
  $('host-title').textContent=h.name;$('connection').textContent=h.status!=='online'||h.stale?(h.reachability?`主機目前無法連線（最後看到 ${time(h.reachability.lastSeen)}，下次檢查 ${time(h.reachability.nextCheck)}）。`:'無法取得即時資料。')+(s?'下方保留最後一次成功的快照，請留意更新時間。':'正在等待 collector 回應。'):'';$('updated').textContent=`網頁更新 ${time(fleet.serverTime)} · 每 ${fleet.refreshSeconds} 秒採集`;
- const sum=$('summary');sum.textContent=s?`${s.attention.length} 項需要關注`:'等待資料';sum.className='pill '+(!s?'warning':s.attention.some(a=>a.severity==='error')?'error':s.attention.length?'warning':'ok');$('attention').replaceChildren();$('resources').replaceChildren();$('disks').replaceChildren();$('checks').replaceChildren();$('services').replaceChildren();renderEvents(h.name);if(!s)return;
+ const sum=$('summary');sum.textContent=s?`${s.attention.length} 項需要關注`:'等待資料';sum.className='pill '+(!s?'warning':s.attention.some(a=>a.severity==='error')?'error':s.attention.length?'warning':'ok');$('attention').replaceChildren();$('resources').replaceChildren();$('disks').replaceChildren();$('checks').replaceChildren();$('services').replaceChildren();renderEvents(h.name);renderSessions(h);if(!s)return;
  for(const a of s.attention){const notice=el('div',a.title,'notice '+a.severity);if(a.detail)notice.append(el('span',a.detail));$('attention').append(notice);}if(!s.attention.length)$('attention').append(el('div',h.status==='online'&&!h.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(h.status==='online'&&!h.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
  const uptime=`${Math.floor(s.hardware.uptime/86400)} 天 ${Math.floor(s.hardware.uptime%86400/3600)} 小時`;
