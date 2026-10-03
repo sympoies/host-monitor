@@ -29,7 +29,7 @@ function restartCounts(snapshot:Snapshot):Record<string,number> {
  const counts:Record<string,number>={};for(const s of snapshot.services)if(typeof s.restarts==='number'&&s.manager!=='launchd')counts[s.name]=(counts[s.name]??0)+s.restarts;return counts;
 }
 const exec=promisify(execFile) as Runner,root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../public');
-const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/order.js',['order.js','text/javascript']],['/style.css',['style.css','text/css']]]);
+const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/order.js',['order.js','text/javascript']],['/tabs.js',['tabs.js','text/javascript']],['/style.css',['style.css','text/css']]]);
 // Service-name substrings that the dashboard lists under its default "important services" filter.
 function serviceMarkers(value:unknown=[]):string[]{if(!Array.isArray(value)||value.length>100||value.some(v=>typeof v!=='string'||!/^[a-zA-Z0-9_.:@-]{1,128}$/.test(v)))throw new Error('invalid-important-services');return [...value];}
 // Only locally collected Linux units may expose a journal tail. The configured exact names, never a browser value,

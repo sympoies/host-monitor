@@ -13,5 +13,5 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "files": ["public/app.ts","public/order.ts"]
+  "files": ["public/app.ts","public/order.ts","public/tabs.ts"]
 }

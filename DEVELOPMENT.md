@@ -52,6 +52,24 @@ Run fixture-backed acceptance with `node scripts/accept-sessions.ts <private-evi
 
 The server configuration may set `hostOrder`, a list of configured host names (each at most once). `/api/fleet` returns it as `defaultOrder`: the listed hosts first, then the remaining hosts in configuration order; without `hostOrder` that is simply the `hosts` order. The dashboard shows the cards in `defaultOrder` until the viewer reorders them: drag a card's grip (mouse or touch), or focus it and press an arrow key to move the card one place. The viewer's order is saved only in that browser's `localStorage` (key `host-monitor.hostOrder`) and never reaches the server. Hosts missing from a saved order are appended in default order, removed hosts are ignored, and unavailable or corrupt storage falls back to the default order. "重設順序" appears once a saved order differs from the default and restores it. The merge logic is `public/order.ts`, served as `/order.js`.
 
+### Host detail tabs and list filters
+
+The host detail view keeps its attention summary above the tabs. Its default
+tab order is resource metrics, disk capacity, checks and recent errors, recent
+events, agent sessions, and services. The tab order and last selected tab are
+saved in that browser's `localStorage` under the versioned key
+`host-monitor.hostTabs.v1`; they are never sent to the server. New sections are
+appended to a saved order, removed sections are ignored, and a reset control
+restores the default order. A section not available for a host is hidden while
+its place in the saved order is retained. The host name remains the URL hash.
+The merge and storage logic is `public/tabs.ts`, served as `/tabs.js`.
+
+Agent session rows have All, Working, and Waiting / idle filters. Services,
+checks, recent events, disk capacity, and the fleet overview show category
+filters only when the current data has more than one non-empty category. These
+filters are client-side and reset to All on reload; no collector or API fields
+are added for them.
+
 ### Beszel disk capacity
 
 A host whose snapshot has `resources: external` delegates generic resource metrics to Beszel. When the server configuration has a `beszel` object, the server also reads that host's disk capacity from the hub, read-only, and adds it to the host in `/api/fleet` as `beszel`. No second collector runs, and Beszel stays the source for resource history and resource alerts.
