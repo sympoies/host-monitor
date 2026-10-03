@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "serverTime": "2026-10-03T10:00:00.000Z",
+  "refreshSeconds": 20,
+  "defaultOrder": ["linux-a", "agentless-a", "android-a"],
+  "hosts": [
+    {
+      "name": "linux-a",
+      "status": "online",
+      "stale": false,
+      "lastSuccess": "2026-10-03T10:00:00.000Z",
+      "snapshot": {
+        "schemaVersion": 1,
+        "host": "linux-a",
+        "platform": "linux",
+        "resources": "collected",
+        "collectedAt": "2026-10-03T10:00:00.000Z",
+        "hardware": {"cpuCount": 8, "cpuBusy": 24, "load": [0.4, 0.3, 0.2], "uptime": 90000, "kernel": "Linux"},
+        "memory": {"total": 8000000000, "available": 5000000000, "used": 3000000000},
+        "disks": [
+          {"source": "/dev/example", "type": "ext4", "total": 100000000000, "used": 40000000000, "available": 60000000000, "percent": 40, "mount": "/"},
+          {"source": "/dev/example-data", "type": "ext4", "total": 100000000000, "used": 90000000000, "available": 10000000000, "percent": 90, "mount": "/data"}
+        ],
+        "services": [
+          {"name": "web.service", "scope": "system", "health": "ok", "active": "active", "required": true},
+          {"name": "worker.service", "scope": "system", "health": "error", "active": "failed", "required": true},
+          {"name": "timer.service", "scope": "user", "health": "inactive", "active": "inactive"}
+        ],
+        "containers": [],
+        "probes": [{"name": "Ready", "ok": true, "status": 200}, {"name": "Search", "ok": false, "status": 503}],
+        "journalErrors": [{"unit": "worker.service", "scope": "system", "count": 2, "lastAt": "2026-10-03T09:59:00.000Z"}],
+        "agentSessions": {
+          "status": "ok",
+          "sessions": [
+            {"agent": "codex", "status": "running", "phase": "working", "role": "coordinator", "label": "Project coordinator", "title": "Task A", "repoName": "example/project", "account": "sample", "mode": "interactive", "coordinationMode": "advisory", "lineageDepth": 0, "resumable": true, "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:59:00.000Z"},
+            {"agent": "claude", "status": "running", "phase": "working", "role": "worker", "label": "Dispatched worker", "title": "Task B with a longer title that wraps cleanly on a narrow viewport", "repoName": "example/project", "account": "sample", "mode": "interactive", "coordinationMode": "advisory", "lineageDepth": 1, "resumable": true, "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:58:00.000Z"},
+            {"agent": "codex", "status": "running", "phase": "waiting", "role": "tester", "label": "Tester", "title": "Task C", "repoName": "example/project", "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:57:00.000Z"},
+            {"agent": "claude", "status": "running", "phase": "waiting", "role": "analyst", "label": "Analyst", "title": "Task D", "repoName": "example/project", "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:56:00.000Z"},
+            {"agent": "dsh", "status": "running", "phase": "idle", "role": "reviewer", "label": "Reviewer", "title": "Task E", "repoName": "example/project", "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:55:00.000Z"},
+            {"agent": "mystery", "status": "running", "phase": "needs_input", "role": "other", "label": "Other", "title": "Task F", "repoName": "example/project", "createdAt": "2026-10-03T09:00:00.000Z", "lastActivityAt": "2026-10-03T09:54:00.000Z"}
+          ]
+        },
+        "attention": [{"severity": "warning", "kind": "service", "title": "worker.service", "detail": "Failed"}]
+      }
+    },
+    {
+      "name": "agentless-a",
+      "status": "online",
+      "stale": false,
+      "lastSuccess": "2026-10-03T10:00:00.000Z",
+      "snapshot": {
+        "schemaVersion": 1,
+        "host": "agentless-a",
+        "platform": "darwin",
+        "resources": "external",
+        "agentless": true,
+        "collectedAt": "2026-10-03T10:00:00.000Z",
+        "hardware": {"cpuCount": 8, "load": [0, 0, 0], "uptime": 90000, "kernel": "Darwin"},
+        "services": [],
+        "attention": []
+      }
+    },
+    {
+      "name": "android-a",
+      "status": "online",
+      "stale": false,
+      "lastSuccess": "2026-10-03T10:00:00.000Z",
+      "snapshot": {
+        "schemaVersion": 1,
+        "host": "android-a",
+        "platform": "android",
+        "resources": "collected",
+        "collectedAt": "2026-10-03T10:00:00.000Z",
+        "hardware": {"cpuCount": 8, "load": [0, 0, 0], "uptime": 90000, "kernel": "Android"},
+        "memory": {"total": 8000000000, "available": 5000000000, "used": 3000000000},
+        "disks": [{"source": "/dev/example", "type": "ext4", "total": 100000000000, "used": 10000000000, "available": 90000000000, "percent": 10, "mount": "/data"}],
+        "services": [{"name": "sshd", "scope": "user", "health": "ok", "active": "active", "required": true}],
+        "android": {"battery": {"level": 80, "health": "good", "temperature": 32, "status": "not-charging", "power": "usb"}},
+        "attention": []
+      }
+    }
+  ]
+}
