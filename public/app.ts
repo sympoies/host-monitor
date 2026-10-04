@@ -187,7 +187,7 @@ function renderTabs(host:HostView){
  for(const id of DEFAULT_TAB_ORDER){const panel=$(tabPanels[id]);panel.hidden=!visible.includes(id)||id!==active;panel.setAttribute('aria-hidden',String(panel.hidden));}
  const menu=document.querySelector('.tab-order-menu') as HTMLDetailsElement,left=$('move-tab-left') as HTMLButtonElement,right=$('move-tab-right') as HTMLButtonElement;menu.hidden=ordered.length<2;left.disabled=ordered.indexOf(active)<=0;right.disabled=ordered.indexOf(active)>=ordered.length-1;
  $('reset-tab-order').hidden=tabState.order.join()===DEFAULT_TAB_ORDER.join();
- if(focusedTab&&ordered.includes(focusedTab))($('tab-'+focusedTab) as HTMLButtonElement).focus();
+ if(focusedTab&&ordered.includes(focusedTab))($('tab-'+focusedTab) as HTMLButtonElement).focus({preventScroll:true});
 }
 function moveSelectedTab(delta:number){const host=fleet?.hosts.find(item=>item.name===selected);if(!host)return;const available=visibleTabs(host),visible=tabState.order.filter(id=>available.includes(id)),active=visible.includes(preferredTab)?preferredTab:visible[0];if(!active)return;const next=moveVisibleTab(tabState.order,visible,active,delta);if(next.join()===tabState.order.join())return;tabState.order=next;preferredTab=active;tabState.selected=active;saveTabs();renderTabs(host);($('tab-'+active) as HTMLButtonElement).focus();}
 function renderFleetFilters(hosts:HostView[]){

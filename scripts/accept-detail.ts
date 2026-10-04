@@ -48,6 +48,31 @@ try{
   }
   await page.setViewportSize({width:1440,height:1000});
  };
+ const checkRefreshRetention=async()=>{
+  await page.locator('#tab-agents').click();
+  const details=page.locator('#agent-sessions details');
+  for(const [label,width,height] of [['phone',412,915],['desktop',1440,1000]] as const){
+   await page.setViewportSize({width,height});
+   const before=await page.evaluate(()=>{
+    const target=document.querySelectorAll<HTMLDetailsElement>('#agent-sessions details')[3];
+    target.scrollIntoView({block:'center'});window.scrollBy(0,40);
+    return window.scrollY;
+   });
+   assert.ok(before>0,`${label}: scrolled into the session list`);
+   for(let cycle=0;cycle<2;cycle++){
+    await page.evaluate(()=>{(window as typeof window & {priorSessionNode?:Element}).priorSessionNode=document.querySelector('#agent-sessions details')!;});
+    const fleetResponse=page.waitForResponse((r:{url():string})=>new URL(r.url()).pathname==='/api/fleet');
+    const eventsResponse=page.waitForResponse((r:{url():string})=>new URL(r.url()).pathname==='/api/events');
+    await page.evaluate(()=>document.querySelector<HTMLButtonElement>('#refresh')!.click());
+    await fleetResponse;
+    await eventsResponse;
+    await page.waitForFunction(()=>document.querySelector('#agent-sessions details')!==(window as typeof window & {priorSessionNode?:Element}).priorSessionNode);
+   }
+   const after=await page.evaluate(()=>window.scrollY);
+   assert.ok(Math.abs(after-before)<=4,`${label}: scrollY changed from ${before} to ${after}`);
+   assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>node.open)),true,`${label}: expanded disclosures persist`);
+  }
+ };
  if(mode==='large'){
   const results:{sessions:number;operation:string;calls:number;rows:number}[]=[];
   const resetScans=()=>page.evaluate(()=>{(globalThis as typeof globalThis & {disclosureScans:{calls:number;rows:number}}).disclosureScans={calls:0,rows:0};});
@@ -78,16 +103,19 @@ try{
    assert.equal(await details.nth(1).evaluate((node:HTMLDetailsElement)=>node.open),true,'other rows remain expanded');
    await resetScans();await page.getByRole('button',{name:'全部展開',exact:true}).click();await record(sessions,'mixed-bulk-expand');
    assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>node.open)),true);
-  }
-  console.log(JSON.stringify({disclosureScans:results}));
+ }
+ console.log(JSON.stringify({disclosureScans:results}));
   if(out)await fs.writeFile(path.join(out,'disclosure-scans.json'),JSON.stringify(results,null,2)+'\n');
   for(const result of results){
    assert.ok(result.calls<=3&&result.rows<=result.sessions*3,`bounded linear disclosure work for ${result.sessions} rows on ${result.operation}: ${result.calls} scans, ${result.rows} elements`);
-  }
-  assert.deepEqual(errors,[]);
+ }
+ assert.deepEqual(errors,[]);
+ }else if(mode==='scroll-refresh'){
+  await checkRefreshRetention();
  }else if(mode==='before'){
   await page.locator('#tab-agents').click();await capture('before');
  }else{
+  if(mode==='all')await checkRefreshRetention();
   if(mode==='all'||mode==='layout'){
    const tabs=page.locator('#host-tabs [role=tab]');
    assert.deepEqual(await tabs.allTextContents(),['工作階段','磁碟容量','功能檢查與最近錯誤','最近事件','服務']);
@@ -155,5 +183,5 @@ try{
   }
   assert.deepEqual(errors,[]);
  }
- console.log(JSON.stringify({ok:true,mode,widths:mode==='large'?[1440]:[1440,390]}));
+ console.log(JSON.stringify({ok:true,mode,widths:mode==='large'?[1440]:mode==='scroll-refresh'?[412,1440]:[1440,390]}));
 }finally{await browser.close();await new Promise<void>(resolve=>server.close(()=>resolve()));}
