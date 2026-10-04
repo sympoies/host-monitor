@@ -6,11 +6,11 @@ const snapshot=(name:string)=>fleet.hosts.find((h:{name:string})=>h.name===name)
 test('a host that collects its own resources expects four metrics and disk rows',()=>{
  assert.deepEqual(resourceExpectation(snapshot('linux-a')),{resources:'collected',metrics:4,diskRows:true});
 });
-test('an external-resource host expects the Beszel pointer: two metrics and a disk note',()=>{
- assert.deepEqual(resourceExpectation(snapshot('mac-a')),{resources:'external',metrics:2,diskRows:false,text:EXTERNAL_RESOURCE_TEXT});
+test('an external-resource host expects metric slots and a Beszel no-data note',()=>{
+ assert.deepEqual(resourceExpectation(snapshot('mac-a')),{resources:'external',metrics:4,diskRows:false,text:EXTERNAL_RESOURCE_TEXT});
 });
 test('an agentless host expects its own pointer and no service inventory',()=>{
- assert.deepEqual(resourceExpectation({resources:'external',agentless:true}),{resources:'agentless',metrics:2,diskRows:false,text:'僅 ssh 基本資訊'});
+ assert.deepEqual(resourceExpectation({resources:'external',agentless:true}),{resources:'external',metrics:4,diskRows:false,text:EXTERNAL_RESOURCE_TEXT});
 });
 test('the dashboard renders the text the agentless expectation looks for, in the resources and disks panels',()=>{
  const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
@@ -23,10 +23,9 @@ test('a snapshot without the optional resources field is treated as collected, l
 test('a host without a snapshot has no resource expectation',()=>{
  assert.throws(()=>resourceExpectation(snapshot('offline-a')),/no snapshot/);
 });
-test('the dashboard renders the text the external expectation looks for, in the resources and disks panels',()=>{
- const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
- assert.ok(app.includes(`metric('資源指標','${EXTERNAL_RESOURCE_TEXT}'`));
- assert.ok(app.includes(`'此主機的磁碟容量由 ${EXTERNAL_RESOURCE_TEXT} 監控'`));
+test('Beszel freshness and optional GPU count drive installed resource expectations',()=>{
+ assert.deepEqual(resourceExpectation({resources:'external'},{status:'ok',disks:[{}],gpus:[{},{}]}),{resources:'external',metrics:5,diskRows:true,text:EXTERNAL_RESOURCE_TEXT});
+ for(const status of ['stale','unavailable'])assert.deepEqual(resourceExpectation({resources:'external'},{status,disks:[{}],gpus:[{},{}]}),{resources:'external',metrics:4,diskRows:false,text:EXTERNAL_RESOURCE_TEXT});
 });
 test('the browser acceptance takes its resource assertions from the expectation',()=>{
  const script=fs.readFileSync(path.join(import.meta.dirname,'..','scripts','accept-browser.ts'),'utf8');
@@ -44,7 +43,7 @@ test('dashboard tabs preserve the current host section order, with checks and ev
   .map(([,panel])=>panel.match(/<h2\b[^>]*>([^<]+)<\/h2>/)?.[1]);
  const disk=panels.indexOf('磁碟容量');
  assert.deepEqual(panels.slice(disk,disk+3),['磁碟容量','功能檢查與最近錯誤','最近事件']);
- assert.deepEqual(panels.slice(0,6),['資源指標','磁碟容量','功能檢查與最近錯誤','最近事件','Agent sessions','服務']);
+ assert.deepEqual(panels.slice(0,6),['資源指標','磁碟容量','功能檢查與最近錯誤','最近事件','工作階段','服務']);
  assert.match(html,/id="host-tabs"[^>]*role="tablist"/);
  assert.match(html,/id="attention"[^>]*>[\s\S]*?<div class="tab-tools"/);
  assert.match(html,/aria-labelledby="tab-agents"/);

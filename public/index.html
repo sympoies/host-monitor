@@ -28,6 +28,9 @@
       <span id="summary" class="pill"></span>
     </section>
     <section id="attention" class="attention" aria-live="polite"></section>
+    <section id="resource-panel" class="panel" aria-label="資源指標">
+      <h2 class="visually-hidden">資源指標</h2><div id="resources" class="resources" aria-label="硬體資源"></div>
+    </section>
     <div class="tab-tools">
       <div id="host-tabs" class="host-tabs" role="tablist" aria-label="主機詳情區段"></div>
       <details class="tab-order-menu">
@@ -39,9 +42,6 @@
         </div>
       </details>
     </div>
-    <section id="resource-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-resources" tabindex="0">
-      <h2 class="visually-hidden">資源指標</h2><div id="resources" class="resources" aria-label="硬體資源"></div>
-    </section>
     <section id="disk-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-disks" tabindex="0">
       <div class="panel-head"><div><h2>磁碟容量</h2><p>主機檔案系統的使用量與剩餘空間</p></div></div>
       <div id="disk-filters" class="filter-tabs section-filters" hidden></div><div id="disks" class="disk-list"></div>
@@ -55,7 +55,8 @@
       <div id="events-filters" class="filter-tabs section-filters" hidden></div><div id="events" class="events"></div>
     </section>
     <section id="agents-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-agents" tabindex="0">
-      <div class="panel-head"><div><h2>Agent sessions</h2><p>本機執行中的 agent 與活動狀態</p></div></div>
+      <div class="panel-head"><div><h2>工作階段</h2><p>本機執行中的 agent 與活動狀態</p></div></div>
+      <div class="session-tools"><button id="toggle-session-details" type="button" hidden>全部收合</button></div>
       <div id="agent-session-filters" class="filter-tabs section-filters" role="tablist" aria-label="Agent session filters"></div>
       <div id="agent-sessions" class="agent-sessions"></div>
     </section>

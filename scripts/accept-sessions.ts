@@ -25,7 +25,8 @@ try{
  await card('active').click();
  assert.match(await card('active').innerText(),/Agents 4.*工作 1.*等待 \/ 待命 2.*未知 1/);
  assert.equal(await page.locator('.agent-session').count(),4);
- assert.match(await page.locator('.agent-session').first().innerText(),/Coordinator.*codex/s);
+ assert.match(await page.locator('.agent-session').first().innerText(),/Coordinator/);
+ assert.equal(await page.locator('.agent-session').first().getByRole('img',{name:'Codex',exact:true}).count(),1);
  assert.equal(await page.locator('#agent-sessions img').count(),0,'titles render as text');
  const text=await page.locator('#agent-sessions').innerText();
  for(const value of ['example-project','account-a','未讀 2','活動 30 秒前','建立 1 小時前','working','waiting'])assert.ok(text.includes(value),value);
