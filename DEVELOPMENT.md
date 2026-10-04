@@ -105,8 +105,11 @@ and [memory calculation](https://github.com/henrygd/beszel/blob/main/agent/syste
 Run `node scripts/accept-detail.ts <evidence-directory>` after `npm run build`
 for fixture-backed desktop (1440 px) and phone (390 px) acceptance of metrics,
 no-data/stale state, pinned layout, saved-order migration, tab reordering, and
-bulk disclosures. It uses an isolated headless Chrome and the same external
-Playwright resolution as the other acceptance scripts.
+bulk disclosures. Add `large` as the final argument to check 100- and 1,000-row
+inventories: aggregate DOM scans must stay bounded on render, refresh, and bulk
+operations, while individual choices survive refreshes. It uses an isolated
+headless Chrome and the same external Playwright resolution as the other
+acceptance scripts.
 
 ### On-demand service logs
 

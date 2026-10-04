@@ -29,6 +29,16 @@ const browser=await chromium.launch({headless:true,channel:'chrome',chromiumSand
 try{
  const page=await browser.newPage({viewport:{width:1440,height:1000}});
  const errors:string[]=[];page.on('pageerror',(error:Error)=>errors.push(error.message));
+ if(mode==='large')await page.addInitScript(()=>{
+  const state=globalThis as typeof globalThis & {disclosureScans:{calls:number;rows:number}};
+  state.disclosureScans={calls:0,rows:0};
+  const query=Element.prototype.querySelectorAll;
+  Element.prototype.querySelectorAll=function(this:Element,selector:string){
+   const nodes=query.call(this,selector);
+   if(this.id==='agent-sessions'){state.disclosureScans.calls++;state.disclosureScans.rows+=nodes.length;}
+   return nodes;
+  } as typeof query;
+ });
  await page.goto('http://127.0.0.1:'+address.port);await page.locator('#hosts .host').first().waitFor();
  const refresh=async()=>{const done=page.waitForResponse((r:{url():string})=>new URL(r.url()).pathname==='/api/events');await page.locator('#refresh').click();await done;};
  const capture=async(prefix:string)=>{
@@ -38,7 +48,44 @@ try{
   }
   await page.setViewportSize({width:1440,height:1000});
  };
- if(mode==='before'){
+ if(mode==='large'){
+  const results:{sessions:number;operation:string;calls:number;rows:number}[]=[];
+  const resetScans=()=>page.evaluate(()=>{(globalThis as typeof globalThis & {disclosureScans:{calls:number;rows:number}}).disclosureScans={calls:0,rows:0};});
+  const settle=async()=>{await page.evaluate(()=>new Promise<void>(resolve=>setTimeout(resolve,50)));};
+  const record=async(sessions:number,operation:string)=>{
+   await settle();
+   const scan=await page.evaluate(()=>(globalThis as typeof globalThis & {disclosureScans:{calls:number;rows:number}}).disclosureScans);
+   results.push({sessions,operation,...scan});
+  };
+  const details=page.locator('#agent-sessions details');
+  for(const sessions of [100,1000]){
+   api=structuredClone(fixture);
+   const inventory=api.hosts[0].snapshot.agentSessions,sample=inventory.sessions[0];
+   inventory.sessions=Array.from({length:sessions},(_,index)=>({...sample,title:'Example session '+index,createdAt:new Date(Date.parse(api.serverTime)-3600000+index).toISOString()}));
+   await page.reload();await page.waitForFunction((count:number)=>document.querySelectorAll('#agent-sessions details').length===count,sessions);
+   await record(sessions,'initial');
+   assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>node.open)),true);
+   await resetScans();await refresh();await record(sessions,'refresh');
+   await resetScans();await page.getByRole('button',{name:'全部收合',exact:true}).click();await record(sessions,'bulk-collapse');
+   assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>!node.open)),true);
+   await resetScans();await page.getByRole('button',{name:'全部展開',exact:true}).click();await record(sessions,'bulk-expand');
+   assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>node.open)),true);
+   await resetScans();await details.first().locator('summary').click();await record(sessions,'individual');
+   assert.equal(await details.first().evaluate((node:HTMLDetailsElement)=>node.open),false);
+   assert.equal(await page.getByRole('button',{name:'全部展開',exact:true}).count(),1);
+   await resetScans();await refresh();await record(sessions,'mixed-refresh');
+   assert.equal(await details.first().evaluate((node:HTMLDetailsElement)=>node.open),false,'real user collapse persists');
+   assert.equal(await details.nth(1).evaluate((node:HTMLDetailsElement)=>node.open),true,'other rows remain expanded');
+   await resetScans();await page.getByRole('button',{name:'全部展開',exact:true}).click();await record(sessions,'mixed-bulk-expand');
+   assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(node=>node.open)),true);
+  }
+  console.log(JSON.stringify({disclosureScans:results}));
+  if(out)await fs.writeFile(path.join(out,'disclosure-scans.json'),JSON.stringify(results,null,2)+'\n');
+  for(const result of results){
+   assert.ok(result.calls<=3&&result.rows<=result.sessions*3,`bounded linear disclosure work for ${result.sessions} rows on ${result.operation}: ${result.calls} scans, ${result.rows} elements`);
+  }
+  assert.deepEqual(errors,[]);
+ }else if(mode==='before'){
   await page.locator('#tab-agents').click();await capture('before');
  }else{
   if(mode==='all'||mode==='layout'){
@@ -108,5 +155,5 @@ try{
   }
   assert.deepEqual(errors,[]);
  }
- console.log(JSON.stringify({ok:true,mode,widths:[1440,390]}));
+ console.log(JSON.stringify({ok:true,mode,widths:mode==='large'?[1440]:[1440,390]}));
 }finally{await browser.close();await new Promise<void>(resolve=>server.close(()=>resolve()));}

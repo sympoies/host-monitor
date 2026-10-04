@@ -122,7 +122,12 @@ function renderSessions(host:HostView){
   if(session.selectedAccount&&session.selectedAccount!==session.account)detailRows.append(el('span','選定帳號 '+session.selectedAccount));
   const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?'lineage depth '+session.lineageDepth:'',session.resumable!==undefined?'resumable '+session.resumable:'',session.updatedAt?'更新 '+age(session.updatedAt):''].filter(Boolean);
   details.open=sessionDisclosure.get(row.dataset.sessionKey)??sessionDefaults.get(host.name)??true;
-  details.addEventListener('toggle',()=>{if(!details.isConnected)return;sessionDisclosure.set(row.dataset.sessionKey!,details.open);updateSessionToggle(host.name);});details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
+  // Initialization and bulk changes already match the retained state. Their queued native
+  // toggle events must not rescan the whole list; only a changed user choice needs an update.
+  details.addEventListener('toggle',()=>{
+   if(!details.isConnected||details.open===(sessionDisclosure.get(row.dataset.sessionKey!)??sessionDefaults.get(host.name)??true))return;
+   sessionDisclosure.set(row.dataset.sessionKey!,details.open);updateSessionToggle(host.name);
+  });details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
  }
  $('toggle-session-details').hidden=false;updateSessionToggle(host.name);
 }
