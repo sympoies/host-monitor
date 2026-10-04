@@ -9,13 +9,13 @@ interface AgentSession{agent:string;status:string;phase:string;title?:string;rep
 interface SessionInventory{status:string;sessions:AgentSession[]}
 interface Snapshot{agentSessions?:SessionInventory;platform?:string;resources?:string;agentless?:boolean;hardware:{cpuCount:number;cpuBusy?:number;load:number[];uptime:number;kernel:string};memory?:{total:number;available:number;used:number};disks?:Disk[];services:Service[];containers?:Container[];journalErrors?:{unit:string;scope:string;process?:string;count:number;lastAt?:string}[];probes?:{name:string;ok:boolean;status?:number}[];gpus?:{name:string;busy:number;memoryTotal:number;memoryUsed:number;temperature:number}[];android?:Android;attention:Attention[]}
 interface Android{model?:string;release?:string;battery?:{level:number;health:string;temperature:number;status:string;power:string};protection?:boolean|null;thermal?:{status:number;sensors:{name:string;temperature:number}[]}}
-interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
+interface BeszelView{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[];cpuBusy?:number;memory?:{total:number;used:number;available:number};gpus?:{name:string;busy:number}[]}
 interface Reachability{lastSeen:string|null;nextCheck:string;checks:number}
 interface HostView{name:string;reachability?:Reachability;status:string;stale:boolean;beszel?:BeszelView;importantServices?:string[];logUnits?:{name:string;scope:string}[];snapshot:Snapshot|null;lastSuccess:string|null}
 interface Fleet{serverTime:string;refreshSeconds:number;defaultOrder?:string[];hosts:HostView[]}
 interface HostEvent{at:string;host:string;type:string;kind:string;title:string;severity:string;detail?:string}
 interface Row{name:string;scope?:string;description?:string;health:string;source:string;details?:string;required?:boolean;active?:string;state?:string}
-let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false,logRequest=0,dragging=false,openedLog:{host:string;unit:string}|undefined,preferredTab='resources',draggedTab:string|undefined,fleetFilter='all';
+let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=location.hash.slice(1),fetching=false,logRequest=0,dragging=false,openedLog:{host:string;unit:string}|undefined,preferredTab='agents',draggedTab:string|undefined,fleetFilter='all';
 const $=(id:string)=>document.getElementById(id) as HTMLElement;
 const input=(id:string)=>$(id) as HTMLInputElement;
 const storage=()=>{try{return localStorage;}catch{return {getItem:()=>null,setItem:()=>{throw Error();},removeItem:()=>{throw Error();}};}};
@@ -39,7 +39,7 @@ const pill=(text:string,kind:string)=>el('span',text,'pill '+kind);
 const time=(s:string|null|undefined)=>s?new Date(s).toLocaleTimeString('zh-TW',{hour12:false}):'尚未取得';
 const bar=(n:number|undefined)=>{const div=el('div',undefined,'bar '+((n??0)>=95?'error':(n??0)>=85?'warn':''));const span=el('span');span.style.width=Math.max(0,Math.min(100,n||0))+'%';div.append(span);return div;};
 const healthLabel:Record<string,string>={ok:'正常',healthy:'健康',error:'異常',unhealthy:'異常',idle:'待命',inactive:'未啟動',transition:'狀態變更中',unknown:'無法確認'};
-// A host whose resource metrics come from Beszel shows a neutral pointer, never a missing-data warning.
+// Beszel readings have their own freshness; expired or failed readings never render as current.
 const externalResources=(s:Snapshot|null|undefined)=>s?.resources==='external';
 // Android devices are read over adb by the server (fleet-infra decision 0003): battery and thermal state replace CPU and GPU.
 const isAndroid=(s:Snapshot|null|undefined)=>s?.platform==='android';
@@ -47,7 +47,21 @@ const batteryHealth:Record<string,string>={good:'良好',overheat:'過熱',dead:
 const powerLabel:Record<string,string>={ac:'AC 供電',usb:'USB 供電',wireless:'無線充電',dock:'底座供電',none:'未接電源'};
 const thermalLabel=['正常','輕微','中等','嚴重','危急','緊急','關機'];
 const celsius=(n:number)=>n.toFixed(1)+'°C';
-function hostSummary(s:Snapshot){if(s.agentless)return '僅 ssh 基本資訊';if(externalResources(s))return '資源指標：Beszel';if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;}
+function beszelReason(host:HostView){
+ const b=host.beszel;
+ return !b?'Beszel 未設定':b.status==='stale'?'Beszel 資料已過期':b.status==='unavailable'?'Beszel 暫時讀不到':'Beszel 未提供此指標';
+}
+function hostSummary(host:HostView){
+ const s=host.snapshot!;
+ if(externalResources(s)){
+  const b=host.beszel;if(b?.status!=='ok')return '資源無資料 · '+beszelReason(host);
+  const disk=b.disks.find(d=>d.mount==='/'),gpu=b.gpus?.[0];
+  return `Beszel · CPU ${percent(b.cpuBusy)} · 記憶體可用 ${bytes(b.memory?.available)} · 磁碟 ${disk?disk.percent+'%':'無資料'}`+(gpu?` · GPU ${percent(gpu.busy)}`:'')+(b.cpuBusy===undefined||!b.memory||!disk?' · Beszel 未提供此指標':'');
+ }
+ if(s.agentless)return '僅 ssh 基本資訊';
+ if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}
+ return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;
+}
 function age(value:string|undefined){if(!value||!Number.isFinite(Date.parse(value)))return '無法確認';const seconds=Math.max(0,Math.floor((Date.parse(fleet?.serverTime??'')-Date.parse(value))/1000));return seconds<60?seconds+' 秒前':seconds<3600?Math.floor(seconds/60)+' 分鐘前':seconds<86400?Math.floor(seconds/3600)+' 小時前':Math.floor(seconds/86400)+' 天前';}
 function sessionSummary(host:HostView){
  const inventory=host.snapshot?.agentSessions;
@@ -75,8 +89,21 @@ function agentMark(name:string){
  else mark.textContent=label.slice(0,1).toUpperCase();
  return mark;
 }
+const sessionDisclosure=new Map<string,boolean>(),sessionDefaults=new Map<string,boolean>();
+function updateSessionToggle(host:string){
+ const expanded=[...$('agent-sessions').querySelectorAll<HTMLDetailsElement>('details')].every(d=>d.open);
+ const button=$('toggle-session-details');button.textContent=expanded?'全部收合':'全部展開';
+ button.onclick=()=>{
+  const open=!expanded;sessionDefaults.set(host,open);
+  for(const row of $('agent-sessions').querySelectorAll<HTMLElement>('.agent-session')){
+   const details=row.querySelector('details')!;details.open=open;
+   if(row.dataset.sessionKey)sessionDisclosure.set(row.dataset.sessionKey,open);
+  }
+  updateSessionToggle(host);
+ };
+}
 function renderSessions(host:HostView){
- const panel=$('agent-sessions'),openDetails=new Set([...panel.querySelectorAll<HTMLElement>('.agent-session')].filter(row=>(row.querySelector('details') as HTMLDetailsElement|null)?.open).map(row=>row.dataset.sessionKey).filter((key):key is string=>Boolean(key)));panel.replaceChildren();const sessionFilters=$('agent-session-filters');sessionFilters.replaceChildren();sessionFilters.hidden=true;const inventory=host.snapshot?.agentSessions;
+ const panel=$('agent-sessions');panel.replaceChildren();$('toggle-session-details').hidden=true;const sessionFilters=$('agent-session-filters');sessionFilters.replaceChildren();sessionFilters.hidden=true;const inventory=host.snapshot?.agentSessions;
  if(inventory?.status==='disabled'){panel.append(el('p','此主機未啟用 agent session 採集','session-note'));return;}
  if(inventory?.status!=='ok'){panel.append(el('p','Agent sessions 無法確認；尚未取得可用的本機清單','session-note'));return;}
  const retained=host.status!=='online'||host.stale;
@@ -94,8 +121,15 @@ function renderSessions(host:HostView){
   for(const value of [`建立 ${age(session.createdAt)}`,`帳號 ${session.account??'無法確認'}${session.accountState?' · '+session.accountState:''}`,`未讀 ${session.unreadMessageCount??'無法確認'}`])detailRows.append(el('span',value));
   if(session.selectedAccount&&session.selectedAccount!==session.account)detailRows.append(el('span','選定帳號 '+session.selectedAccount));
   const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?'lineage depth '+session.lineageDepth:'',session.resumable!==undefined?'resumable '+session.resumable:'',session.updatedAt?'更新 '+age(session.updatedAt):''].filter(Boolean);
-  details.open=openDetails.has(row.dataset.sessionKey??'');details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
+  details.open=sessionDisclosure.get(row.dataset.sessionKey)??sessionDefaults.get(host.name)??true;
+  // Initialization and bulk changes already match the retained state. Their queued native
+  // toggle events must not rescan the whole list; only a changed user choice needs an update.
+  details.addEventListener('toggle',()=>{
+   if(!details.isConnected||details.open===(sessionDisclosure.get(row.dataset.sessionKey!)??sessionDefaults.get(host.name)??true))return;
+   sessionDisclosure.set(row.dataset.sessionKey!,details.open);updateSessionToggle(host.name);
+  });details.append(summary,detailRows);if(metadata.length)details.append(el('small',metadata.join(' · '),'session-meta'));row.append(details);panel.append(row);
  }
+ $('toggle-session-details').hidden=false;updateSessionToggle(host.name);
 }
 function important(s:Row,markers:string[]=[]){return s.required||markers.some(m=>s.name.includes(m))||s.health==='error';}
 function closeLog(){logRequest++;openedLog=undefined;$('log-panel').hidden=true;$('log-body').textContent='';}
@@ -129,11 +163,11 @@ const hostOrder=(defaults:string[])=>loadOrder(storage(),defaults);
 const slots=()=>[...$('hosts').children] as HTMLElement[];
 const currentOrder=()=>slots().map(n=>n.dataset.host as string);
 function reorder(defaults:string[],order:string[]){const complete=mergeVisibleOrder(hostOrder(defaults),order);if(complete.join()===defaults.join())clearOrder(storage());else saveOrder(storage(),complete);render();}
-const tabLabels:Record<string,string>={resources:'資源指標',disks:'磁碟容量',checks:'功能檢查與最近錯誤',events:'最近事件',agents:'Agent sessions',services:'服務'};
-const tabPanels:Record<string,string>={resources:'resource-panel',disks:'disk-panel',checks:'checks-panel',events:'events-panel',agents:'agents-panel',services:'services-panel'};
+const tabLabels:Record<string,string>={disks:'磁碟容量',checks:'功能檢查與最近錯誤',events:'最近事件',agents:'工作階段',services:'服務'};
+const tabPanels:Record<string,string>={disks:'disk-panel',checks:'checks-panel',events:'events-panel',agents:'agents-panel',services:'services-panel'};
 function visibleTabs(host:HostView){
- const snapshot=host.snapshot,ids=['resources','events'];
- if(snapshot&&(!snapshot.agentless&&(externalResources(snapshot)||Boolean(snapshot.disks?.length))))ids.push('disks');
+ const snapshot=host.snapshot,ids=['events'];
+ if(snapshot&&(externalResources(snapshot)||(!snapshot.agentless&&Boolean(snapshot.disks?.length))))ids.push('disks');
  if(snapshot&&((snapshot.probes?.length??0)>0||(snapshot.journalErrors?.length??0)>0||isAndroid(snapshot)))ids.push('checks');
  if(snapshot?.agentSessions)ids.push('agents');
  if(snapshot&&!snapshot.agentless&&((snapshot.services?.length??0)>0||(snapshot.containers?.length??0)>0))ids.push('services');
@@ -141,7 +175,7 @@ function visibleTabs(host:HostView){
 }
 function saveTabs(){saveTabState(storage(),{order:tabState.order,selected:preferredTab});}
 function renderTabs(host:HostView){
- const focusedTab=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('#host-tabs [role=tab]')?.dataset.tab,visible=visibleTabs(host),ordered=tabState.order.filter(id=>visible.includes(id)),active=visible.includes(preferredTab)?preferredTab:ordered[0]??'resources',root=$('host-tabs');root.replaceChildren();
+ const focusedTab=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('#host-tabs [role=tab]')?.dataset.tab,visible=visibleTabs(host),ordered=tabState.order.filter(id=>visible.includes(id)),active=visible.includes(preferredTab)?preferredTab:ordered[0]??'agents',root=$('host-tabs');root.replaceChildren();
  for(const id of ordered){const tab=el('button',tabLabels[id],'host-tab') as HTMLButtonElement;tab.id='tab-'+id;tab.type='button';tab.setAttribute('role','tab');tab.setAttribute('aria-controls',tabPanels[id]);tab.setAttribute('aria-selected',String(id===active));tab.tabIndex=id===active?0:-1;tab.draggable=true;tab.dataset.tab=id;
   tab.addEventListener('click',()=>{preferredTab=id;tabState.selected=id;saveTabs();renderTabs(host);($('tab-'+id) as HTMLButtonElement).focus();});
   tab.addEventListener('keydown',event=>{const at=ordered.indexOf(id),next=event.key==='ArrowRight'?at+1:event.key==='ArrowLeft'?at-1:event.key==='Home'?0:event.key==='End'?ordered.length-1:-1;if(next<0)return;event.preventDefault();const target=ordered[(next+ordered.length)%ordered.length];preferredTab=target;tabState.selected=target;saveTabs();renderTabs(host);($('tab-'+target) as HTMLButtonElement).focus();});
@@ -176,9 +210,12 @@ function renderChecks(snapshot:Snapshot){
  for(const row of rows)if(selected==='all'||row.category===selected)$('checks').append(row.node);
 }
 function renderDisks(host:HostView,snapshot:Snapshot){
- const root=$('disks');root.replaceChildren();const disks=externalResources(snapshot)?host.beszel?.disks??[]:snapshot.disks??[];
- if(snapshot.agentless){root.append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));drawFilterTabs('disk-filters','Disk capacity filters',[],'all',()=>{});return;}
- if(externalResources(snapshot)){const note=el('div','此主機的磁碟容量由 Beszel 監控','check');if(host.beszel){const state=host.beszel.status==='ok'?'磁碟容量來自 Beszel':host.beszel.status==='stale'?'Beszel 資料已過期':'Beszel 暫時讀不到';note.append(el('span',state));if(host.beszel.status!=='ok')note.append(pill(host.beszel.status==='stale'?'已過期':'讀取失敗','warning'));note.append(el('small',host.beszel.status==='unavailable'?(host.beszel.lastSuccess?`最後成功 ${time(host.beszel.lastSuccess)}${host.beszel.disks.length?'，下列為當時資料':''}`:'尚未成功讀取'):`資料時間 ${time(host.beszel.recordedAt)}`));}root.append(note);}
+ const root=$('disks');root.replaceChildren();const disks=externalResources(snapshot)?(host.beszel?.status==='ok'?host.beszel.disks:[])??[]:snapshot.disks??[];
+ if(snapshot.agentless&&!externalResources(snapshot)){root.append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));drawFilterTabs('disk-filters','Disk capacity filters',[],'all',()=>{});return;}
+ if(externalResources(snapshot)){
+  const note=el('div',host.beszel?.status==='ok'?'磁碟容量來自 Beszel':'磁碟無資料 · '+beszelReason(host),'check');
+  if(host.beszel?.recordedAt)note.append(el('small',`Beszel 資料時間 ${time(host.beszel.recordedAt)} · ${age(host.beszel.recordedAt)}`));root.append(note);
+ }
  if(!disks.length){if(!root.children.length)root.append(el('div','目前沒有磁碟容量資料','check'));drawFilterTabs('disk-filters','Disk capacity filters',[],'all',()=>{});return;}
  const state=(value:number):'normal'|'warning'|'critical'=>value>=95?'critical':value>=85?'warning':'normal',counts={normal:0,warning:0,critical:0};for(const disk of disks)counts[state(disk.percent)]++;let selected=selectedFilter('disks');if(selected!=='all'&&!counts[selected as keyof typeof counts]){selected='all';sectionFilter.set('disks','all');}
  drawFilterTabs('disk-filters','Disk capacity filters',[{id:'all',label:'All',count:disks.length},{id:'normal',label:'Normal',count:counts.normal},{id:'warning',label:'Warning',count:counts.warning},{id:'critical',label:'Critical',count:counts.critical}],selected,id=>{sectionFilter.set('disks',id);renderDisks(host,snapshot);});
@@ -211,7 +248,7 @@ function render(){
   const good=host.status==='online'&&!host.stale,tone=!good?'warning':host.snapshot?.attention.some(item=>item.severity==='error')?'error':host.snapshot?.attention.length?'warning':'ok';
   const button=el('button',undefined,'host tone-'+tone+(host.name===selected?' selected':''));button.setAttribute('aria-pressed',String(host.name===selected));
   const top=el('div',undefined,'host-top');top.append(el('span',host.name,'host-name'),pill(host.status==='loading'?'讀取中':!good?'離線 / 資料過期':host.snapshot?.attention.length?'需要關注':'正常',tone));
-  button.append(top,el('div',host.snapshot?hostSummary(host.snapshot):'等待主機回應','host-detail'),el('div',host.reachability?`最後看到 ${time(host.reachability.lastSeen)} · 下次檢查 ${time(host.reachability.nextCheck)}`:`最近成功更新 ${time(host.lastSuccess)}`,'host-detail'));
+  button.append(top,el('div',host.snapshot?hostSummary(host):'等待主機回應','host-detail'),el('div',host.reachability?`最後看到 ${time(host.reachability.lastSeen)} · 下次檢查 ${time(host.reachability.nextCheck)}`:`最近成功更新 ${time(host.lastSuccess)}`,'host-detail'));
   button.append(el('div',sessionSummary(host),'host-detail host-agents'));
   button.addEventListener('click',()=>{closeLog();selected=host.name;location.hash=selected;render();});slot.append(button,grip(host.name,defaults));$('hosts').append(slot);
  }
@@ -227,9 +264,17 @@ function render(){
  if(!snapshot.attention.length)$('attention').append(el('div',host.status==='online'&&!host.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(host.status==='online'&&!host.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
  const uptime=`${Math.floor(snapshot.hardware.uptime/86400)} 天 ${Math.floor(snapshot.hardware.uptime%86400/3600)} 小時`;
- if(snapshot.agentless){metric('資源指標','未安裝 collector','僅 ssh 基本資訊：不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);}
- else if(externalResources(snapshot)){metric('資源指標','Beszel','CPU、記憶體、磁碟與 GPU 由 Beszel 監控與保存歷史');metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);}
- else if(isAndroid(snapshot)){const battery=snapshot.android?.battery,thermal=snapshot.android?.thermal,protection=snapshot.android?.protection,memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined,data=snapshot.disks?.find(disk=>disk.mount==='/data');
+ if(externalResources(snapshot)){
+  const b=host.beszel,current=b?.status==='ok'?b:undefined,source=current?`Beszel · 資料時間 ${time(b?.recordedAt)} · ${age(b?.recordedAt??undefined)}`:beszelReason(host);
+  metric('CPU 使用率',percent(current?.cpuBusy),current?.cpuBusy!==undefined?source:beszelReason(host),current?.cpuBusy);
+  const memory=current?.memory,memoryPercent=memory?memory.used/memory.total*100:undefined;
+  metric('記憶體使用率',percent(memoryPercent),memory?`${source} · 使用 ${bytes(memory.used)} / ${bytes(memory.total)} · 可用 ${bytes(memory.available)}`:beszelReason(host),memoryPercent);
+  const disk=current?.disks.find(d=>d.mount==='/');
+  metric('系統磁碟',disk?disk.percent+'%':'無資料',disk?`${source} · 使用 ${bytes(disk.used)} · 可用 ${bytes(disk.available)}`:beszelReason(host),disk?.percent);
+  if(current?.gpus?.length)for(const gpu of current.gpus)metric('GPU 使用率',percent(gpu.busy),`${source} · ${gpu.name}`,gpu.busy);
+  else metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);
+ }
+ else if(snapshot.agentless){metric('資源指標','未安裝 collector','僅 ssh 基本資訊：不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);} else if(isAndroid(snapshot)){const battery=snapshot.android?.battery,thermal=snapshot.android?.thermal,protection=snapshot.android?.protection,memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined,data=snapshot.disks?.find(disk=>disk.mount==='/data');
   metric('電池電量',battery?battery.level+'%':'無資料',battery?`健康 ${batteryHealth[battery.health]??battery.health} · ${powerLabel[battery.power]??battery.power} · 電池保護 ${protection==null?'無資料':protection?'開啟':'關閉'}`:'採集無法確認');
   metric('電池溫度',battery?celsius(battery.temperature):'無資料',thermal?[`熱狀態 ${thermalLabel[thermal.status]??thermal.status}`,...thermal.sensors.map(sensor=>`${sensor.name} ${celsius(sensor.temperature)}`)].join(' · '):'熱感測無法確認');
   metric('記憶體使用率',percent(memoryPercent),memory?`使用 ${bytes(memory.used)} / ${bytes(memory.total)} · 可用 ${bytes(memory.available)}`:'採集無法確認',memoryPercent);

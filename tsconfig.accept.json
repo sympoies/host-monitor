@@ -2,5 +2,5 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {"lib": ["es2024", "dom"]},
   "include": [],
-  "files": ["scripts/accept-browser.ts", "scripts/accept-sessions.ts"]
+  "files": ["scripts/accept-browser.ts", "scripts/accept-sessions.ts", "scripts/accept-detail.ts", "scripts/test-tabs-browser.ts"]
 }

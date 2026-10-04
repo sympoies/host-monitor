@@ -1,5 +1,5 @@
 import {test} from 'node:test';import net from 'node:net';import assert from 'node:assert/strict';import {once} from 'node:events';import fs from 'node:fs/promises';import path from 'node:path';
-import {createMonitor} from '../src/server.ts';import {parseBeszelStats} from '../src/beszel.ts';
+import {createMonitor} from '../src/server.ts';import {parseBeszelStats,parseBeszelResources} from '../src/beszel.ts';
 const stats=JSON.parse(await fs.readFile(path.join(import.meta.dirname,'fixtures/beszel/system-stats.json'),'utf8'));
 const GIB=2**30,collectedAt='2026-09-28T15:34:15.000Z',at=Date.parse(collectedAt);
 const mac={name:'mac-a',ssh:'mac-a',node:'/usr/bin/node',collector:'/app/collector.ts',config:'/app/host.json'};
@@ -45,6 +45,14 @@ test('an external host shows the disks Beszel reports, read-only with the config
   const n=h.calls.length;await m.refresh();assert.equal(h.calls.length-n,1,'a later refresh reuses the session token and system id');
  });
 });
+test('delegated resources expose CPU, available memory and optional GPU utilization from the same record',async()=>{
+ const h=hub();await running(h,'external',async(m,fleet)=>{
+  await m.refresh();const reading=(await fleet()).hosts[0].beszel;
+  assert.equal(reading.cpuBusy,3.1);
+  assert.deepEqual(reading.memory,{total:16*GIB,used:6*GIB,available:10*GIB});
+  assert.deepEqual(reading.gpus,[{name:'Example GPU',busy:27}]);
+ });
+});
 test('a host that collects its own resources never calls the hub',async()=>{
  const h=hub();await running(h,'collected',async(m,fleet)=>{await m.refresh();assert.equal('beszel' in (await fleet()).hosts[0],false);assert.equal(h.calls.length,0);});
 });
@@ -56,7 +64,7 @@ test('without a beszel block the fleet is unchanged',async()=>{
 test('an unreachable hub keeps the last disks and last success time and says it is unavailable',async()=>{
  const h=hub();await running(h,'external',async(m,fleet)=>{
   await m.refresh();h.down=true;await m.refresh();const host=(await fleet()).hosts[0];
-  assert.equal(host.status,'online');assert.equal(host.beszel.status,'unavailable');assert.equal(host.beszel.disks.length,5);assert.equal(host.beszel.lastSuccess,collectedAt);
+  assert.equal(host.status,'online');assert.equal(host.beszel.status,'unavailable');assert.equal(host.beszel.disks.length,5);assert.equal(host.beszel.lastSuccess,collectedAt);assert.equal(host.beszel.cpuBusy,3.1);assert.equal(host.beszel.memory.available,10*GIB);
  });
  const never=hub({down:true});await running(never,'external',async(m,fleet)=>{await m.refresh();const host=(await fleet()).hosts[0];assert.deepEqual(host.beszel,{status:'unavailable',lastSuccess:null,recordedAt:null,disks:[]});});
 });
@@ -66,7 +74,7 @@ test('a system the hub does not know and missing credentials are unavailable, no
  await monitor.refresh();assert.equal(h.calls.length,0);
 });
 test('a hub record older than the staleness limit is reported stale', async()=>{
- await running(hub({age:11*60*1000}),'external',async(m,fleet)=>{await m.refresh();const host=(await fleet()).hosts[0];assert.equal(host.beszel.status,'stale');assert.equal(host.beszel.disks.length,5);});
+ await running(hub({age:11*60*1000}),'external',async(m,fleet)=>{await m.refresh();const host=(await fleet()).hosts[0];assert.equal(host.beszel.status,'stale');assert.equal(host.beszel.disks.length,5);assert.equal(host.beszel.cpuBusy,3.1);});
 });
 test('an ok reading turns stale as it ages, without another hub read', async()=>{
  let clock=at;const h=hub(),monitor=createMonitor({hosts:[mac],beszel},{now:()=>clock,env,fetch:h.fetchImpl as any,run:async()=>({stdout:JSON.stringify(snapshot('external'))})});
@@ -94,4 +102,24 @@ test('beszel configuration is validated',()=>{
  for(const bad of [{...beszel,url:'http://hub.example.com'},{...beszel,url:'http://user:pw@127.0.0.1:8090'},{...beszel,emailEnv:'lower'},{...beszel,passwordEnv:undefined},{url:beszel.url},'x'])
   assert.throws(()=>createMonitor({hosts:[mac],beszel:bad} as any),/invalid-beszel/);
  assert.throws(()=>createMonitor({hosts:[{...mac,beszelName:'a\nb'}],beszel} as any),/invalid-hosts/);
+});
+
+test('missing and malformed delegated metrics remain unknown rather than becoming zero',()=>{
+ assert.deepEqual(parseBeszelResources(null),{gpus:[]});
+ assert.deepEqual(parseBeszelResources({cpu:'3',m:16,mu:17,g:{a:{n:'GPU',u:101}}}),{gpus:[]});
+ for(const cpu of [-1,101,NaN,Infinity])assert.equal(parseBeszelResources({cpu}).cpuBusy,undefined);
+ for(const memory of [{m:16},{m:0,mu:0},{m:Infinity,mu:0},{m:16,mu:-1}])assert.equal(parseBeszelResources(memory).memory,undefined);
+ assert.deepEqual(parseBeszelResources({cpu:0,m:16,mu:0,g:{a:{n:'Example GPU',u:0,secret:'ignored'}},private:'ignored'}),{cpuBusy:0,memory:{total:16*GIB,used:0,available:16*GIB},gpus:[{name:'Example GPU',busy:0}]});
+});
+test('a valid CPU-only hub record stays usable when disk and GPU data are absent',async()=>{
+ const h=hub(),inner=h.fetchImpl;
+ h.fetchImpl=async(url,init)=>new URL(String(url)).pathname==='/api/collections/system_stats/records'
+  ?new Response(JSON.stringify({items:[{created:collectedAt,stats:{cpu:0}}]}),{status:200}):inner(url,init);
+ await running(h,'external',async(m,fleet)=>{await m.refresh();const b=(await fleet()).hosts[0].beszel;assert.equal(b.status,'ok');assert.equal(b.cpuBusy,0);assert.equal(b.memory,undefined);assert.deepEqual(b.disks,[]);assert.deepEqual(b.gpus,[]);});
+});
+test('an empty latest hub record is unavailable and never treated as a successful zero reading',async()=>{
+ const h=hub(),inner=h.fetchImpl;
+ h.fetchImpl=async(url,init)=>new URL(String(url)).pathname==='/api/collections/system_stats/records'
+  ?new Response(JSON.stringify({items:[]}),{status:200}):inner(url,init);
+ await running(h,'external',async(m,fleet)=>{await m.refresh();assert.equal((await fleet()).hosts[0].beszel.status,'unavailable');});
 });

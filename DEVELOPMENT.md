@@ -16,11 +16,11 @@ Run `npm run validate` for type checking (`npm run typecheck`), shell syntax, th
 
 Test hardware parsing, service classification, incomplete collection, offline/stale state, static path restrictions, and read-only API behavior. Browser acceptance must verify both host views, service filtering, attention events, last-update freshness, and narrow-screen usability using live installed data. Keep resource sampling distinct from lifetime counters. An inactive successful oneshot is normal; a failed unit or a configured continuously-running service that stops needs attention. An unreachable collector must never appear healthy.
 
-Run browser acceptance against a running server with `node scripts/accept-browser.ts --config <server-config.json> <url> <private-evidence-dir>`. It expects exactly the hosts in the server configuration, drives installed Chrome headed, and writes screenshots and `browser-receipt.json` to the evidence directory. Per host it expects the resources that `scripts/accept-expectations.ts` derives from the snapshot: four metrics and disk rows when the host collects its own resources, and the Beszel pointer (two metrics and a disk note) when it reports `resources: external`. Playwright is not a project dependency: it resolves from this checkout unless `HOST_MONITOR_PLAYWRIGHT_ROOT` names a directory whose `node_modules` contains it.
+Run browser acceptance against a running server with `node scripts/accept-browser.ts --config <server-config.json> <url> <private-evidence-dir>`. It expects exactly the hosts in the server configuration, drives installed Chrome headed, and writes screenshots and `browser-receipt.json` to the evidence directory. Per host it expects the resources that `scripts/accept-expectations.ts` derives from the snapshot: four metrics and disk rows when the host collects its own resources, and Beszel-backed resource slots when it reports `resources: external`. GPU slots appear only when the fresh hub record includes GPUs; unavailable metrics show an explicit reason. Playwright is not a project dependency: it resolves from this checkout unless `HOST_MONITOR_PLAYWRIGHT_ROOT` names a directory whose `node_modules` contains it.
 
 A host configuration has `name` (the server host name, without dots), optional `identity`, `required` (`system` and `user` lists), `probes`, `docker`, `requiredContainers`, and `nvidia`. The collector refuses to run unless the machine hostname matches `identity`, or `name` when `identity` is absent; both sides are compared case-insensitively after removing a `.local` suffix, so a Mac that reports `MacBook.local` uses `"identity": "MacBook"`.
 
-The collector selects a platform adapter. On Linux it reads `/proc`, GNU `df`, `systemctl`, `journalctl`, and optionally `docker` and `nvidia-smi`. On macOS (`darwin`) it reads launchd without privileges: `required.user` lists LaunchAgent labels in the `gui/<uid>` domain (`user/<uid>` when there is no login session) and `required.system` lists LaunchDaemon labels in the `system` domain. Every loaded job is inventoried from `launchctl print <domain>`; each required label is also read with `launchctl print <domain>/<label>`, keeping only its type, state, pid, run count, last exit code or signal, run interval, and program name. A running job is healthy. A required job that is missing, exited non-zero, or was killed by a signal is an error; a required periodic job that last exited 0 is idle, and any other stopped required job is an error. Jobs that are not required never need attention, because launchd routinely stops idle agents. Error counts come from `/usr/bin/log show --last 1h --style ndjson` filtered to the program names of the required jobs (and to the collecting user for agents), streamed with a timeout and a line cap; only counts and the last timestamp are kept. macOS snapshots set `resources` to `external` and collect no CPU, memory, disk, or GPU data; the dashboard shows Beszel as their source instead of a failure. Snapshots stay `schemaVersion` 1: `platform`, `resources`, service `manager`, journal `process`, and the systemd service `restarts` counter are optional additions.
+The collector selects a platform adapter. On Linux it reads `/proc`, GNU `df`, `systemctl`, `journalctl`, and optionally `docker` and `nvidia-smi`. On macOS (`darwin`) it reads launchd without privileges: `required.user` lists LaunchAgent labels in the `gui/<uid>` domain (`user/<uid>` when there is no login session) and `required.system` lists LaunchDaemon labels in the `system` domain. Every loaded job is inventoried from `launchctl print <domain>`; each required label is also read with `launchctl print <domain>/<label>`, keeping only its type, state, pid, run count, last exit code or signal, run interval, and program name. A running job is healthy. A required job that is missing, exited non-zero, or was killed by a signal is an error; a required periodic job that last exited 0 is idle, and any other stopped required job is an error. Jobs that are not required never need attention, because launchd routinely stops idle agents. Error counts come from `/usr/bin/log show --last 1h --style ndjson` filtered to the program names of the required jobs (and to the collecting user for agents), streamed with a timeout and a line cap; only counts and the last timestamp are kept. macOS snapshots set `resources` to `external` and collect no CPU, memory, disk, or GPU data; the server reads their metrics from the configured Beszel hub; the dashboard shows the source, record age, and explicit no-data states. Snapshots stay `schemaVersion` 1: `platform`, `resources`, service `manager`, journal `process`, and the systemd service `restarts` counter are optional additions.
 
 Android devices (fleet-infra decision 0003) run no collector. The server collects a device attached to its own USB with one `adb -s <serial> shell` call per refresh; the script (`ADB_SCRIPT` in `src/android.ts`) is read-only and runs `dumpsys battery`, `settings get global protect_battery` (Samsung battery protection; `null` on other devices), `dumpsys thermalservice`, `/proc/meminfo`, `df -k /data`, `/proc/uptime`, `/proc/loadavg`, `nproc`, `uname -r`, a `ps` filtered to the Termux `sshd` and the Tailscale app, and two `getprop` values. The output must end with its completion marker or the attempt fails as a whole; a section that cannot be parsed becomes a collection issue. The snapshot has `platform: android`, battery level, health, temperature, status and power source, protection, thermal status and HAL sensors, memory, a `/data` disk row, and two services: the required `sshd` (it must run as the Termux app's user) and the optional `tailscale` app. Android attention replaces the Linux memory and disk thresholds: battery temperature at or above 45 °C (error), battery health other than good (error; warning when unknown), `/data` at or above 90% (warning; error at 95%), battery protection off while on external power (warning), and `sshd` not running (a required service error). A device that is detached, offline, or unauthorized marks only its host offline and, by default, never raises an offline alert, because an unplugged phone is an expected state. A device may instead be attached to another collector host: give its entry an `ssh` alias and an absolute `adb.bin` (a non-interactive remote shell has a minimal `PATH`), and the server runs the same script through one `ssh <alias> <bin> -s <serial> shell '<script>'` call, with the script passed as one single-quoted word. The alias and serial are allowlisted. A host entry's own `offlineAfterSeconds` turns offline alerts on for an adb device whose collection stays down that long (see the alerts table), so a broken collection path is told apart from a phone that is merely unplugged for a while.
 
@@ -54,25 +54,27 @@ The server configuration may set `hostOrder`, a list of configured host names (e
 
 ### Host detail tabs and list filters
 
-The host detail view keeps its attention summary above the tabs. Its default
-tab order is resource metrics, disk capacity, checks and recent errors, recent
-events, agent sessions, and services. The tab order and last selected tab are
-saved in that browser's `localStorage` under the versioned key
-`host-monitor.hostTabs.v1`; they are never sent to the server. New sections are
-appended to a saved order, removed sections are ignored, and a reset control
-restores the default order. A section not available for a host is hidden while
-its place in the saved order is retained. The host name remains the URL hash.
-The merge and storage logic is `public/tabs.ts`, served as `/tabs.js`.
+The host detail view keeps its attention summary and resource metrics above the
+tabs, so metrics remain visible when switching sections. The default tab order
+is 工作階段 (agent sessions), disk capacity, checks and recent errors, recent
+events, and services; sessions is selected first when no valid saved selection
+exists. The stable `agents` id and `host-monitor.hostTabs.v1` localStorage key
+retain existing saved orders and selections across the label change. The removed
+`resources` tab is dropped from saved orders, and a saved resource selection
+falls back to sessions. New sections are appended, removed sections are ignored,
+and reset restores the default order. A section unavailable for a host is hidden
+while its place in the saved order is retained. The host name remains the URL
+hash. The merge and storage logic is `public/tabs.ts`, served as `/tabs.js`.
 
-Agent session rows have All, Working, and Waiting / idle filters. Services,
+Agent session rows have All, Working, and Waiting / idle filters. Their more-info disclosures default to expanded. One button above the list expands or collapses every row, including filtered rows; individual choices and bulk state survive polling and host switches for the current page session. Unknown, disabled, and empty inventories hide the button. Services,
 checks, recent events, disk capacity, and the fleet overview show category
 filters only when the current data has more than one non-empty category. These
 filters are client-side and reset to All on reload; no collector or API fields
 are added for them.
 
-### Beszel disk capacity
+### Beszel resource metrics
 
-A host whose snapshot has `resources: external` delegates generic resource metrics to Beszel. When the server configuration has a `beszel` object, the server also reads that host's disk capacity from the hub, read-only, and adds it to the host in `/api/fleet` as `beszel`. No second collector runs, and Beszel stays the source for resource history and resource alerts.
+A host whose snapshot has `resources: external` delegates generic resource metrics to Beszel. When the server configuration has a `beszel` object, the server reads that host's resource metrics from the hub, read-only, and adds it to the host in `/api/fleet` as `beszel`. No second collector runs, and Beszel stays the source for resource history and resource alerts.
 
 | Key | Meaning |
 | --- | --- |
@@ -80,9 +82,34 @@ A host whose snapshot has `resources: external` delegates generic resource metri
 | `beszel.emailEnv`, `beszel.passwordEnv` | Required. Names of environment variables that hold a hub user's email and password. Configuration never holds credentials. A missing value makes the host's Beszel state `unavailable`. |
 | host `beszelName` | Optional. The Beszel system name; defaults to the host `name` (matched case-insensitively). |
 
-After each successful collection of an external host the server authenticates with `POST /api/collections/users/auth-with-password`, looks up the system in `systems`, and reads the newest `1m` record of `system_stats`. Sizes are GiB: `d`/`du` give the root disk, and each `stats.efs` entry (Beszel's `EXTRA_FILESYSTEMS`, keyed by display name) gives one extra filesystem. The session token and the system id stay in memory; a rejected token is replaced once. Each request has a five-second timeout, and the hub is never contacted for hosts that collect their own resources.
+After each successful collection of an external host the server authenticates with `POST /api/collections/users/auth-with-password`, looks up the system in `systems`, and reads the newest `1m` record of `system_stats`. CPU utilization is `stats.cpu`; `m`/`mu` give total and used memory in GiB, with available memory derived as total minus used under the hub's configured memory calculation. Optional `g[id].n`/`u` give GPU name and utilization. Missing or invalid fields remain unknown. Disk sizes are GiB: `d`/`du` give the root disk, and each `stats.efs` entry (Beszel's `EXTRA_FILESYSTEMS`, keyed by display name) gives one extra filesystem. The session token and the system id stay in memory; a rejected token is replaced once. Each request has a five-second timeout, and the hub is never contacted for hosts that collect their own resources.
 
-`host.beszel` is `{status, lastSuccess, recordedAt, disks}`: `ok`; `stale` when the newest record is over ten minutes old when the fleet is served (it ages between hub reads); or `unavailable` when the hub cannot be read, the system is unknown, or credentials are missing. A failed read keeps the last `disks`, `lastSuccess`, and `recordedAt`, so the dashboard shows the last known capacity with its age and "Beszel 暫時讀不到" instead of an error. Hub trouble never changes the host's own `status`, and it raises no attention item: Beszel owns disk threshold alerts (fleet-infra decision 0002). The disk rows use the same layout as self-collected hosts, with the mount `/` for the root disk and the display name for each extra filesystem.
+`host.beszel` is `{status, lastSuccess, recordedAt, disks, cpuBusy?, memory?, gpus?}`.
+Memory fields (`total`, `used`, `available`) and disk sizes are bytes; GPU entries
+contain only `name` and `busy` (%). Status is `ok`, `stale` when the newest record
+is over ten minutes old when the fleet is served (it ages between hub reads), or
+`unavailable` when the hub cannot be read, the system is unknown, credentials are
+missing, or no usable record exists. A failed read retains the previous metrics
+and times in the API with an unavailable status. Cards, pinned metrics, and disk
+rows display values only from an `ok` reading. Otherwise they show no data and a
+reason (unconfigured, stale, unreadable, or missing metric); retained values are
+never presented as current. Fresh detail metrics show the Beszel record time and
+age. Agentless external hosts use the same hub metrics without a second collector.
+Hub trouble never changes the host's own `status` or creates attention items:
+Beszel owns resource threshold alerts. Disk rows use the same layout as
+self-collected hosts, with `/` for the root and each extra filesystem's display
+name.
+
+The adapter fields follow [Beszel's stats types](https://github.com/henrygd/beszel/blob/main/internal/entities/system/system.go)
+and [memory calculation](https://github.com/henrygd/beszel/blob/main/agent/system.go).
+Run `node scripts/accept-detail.ts <evidence-directory>` after `npm run build`
+for fixture-backed desktop (1440 px) and phone (390 px) acceptance of metrics,
+no-data/stale state, pinned layout, saved-order migration, tab reordering, and
+bulk disclosures. Add `large` as the final argument to check 100- and 1,000-row
+inventories: aggregate DOM scans must stay bounded on render, refresh, and bulk
+operations, while individual choices survive refreshes. It uses an isolated
+headless Chrome and the same external Playwright resolution as the other
+acceptance scripts.
 
 ### On-demand service logs
 

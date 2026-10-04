@@ -4,7 +4,7 @@ import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
 import {createTracker,createNotifier,createHistory,webhookUrl,parseQuietHours,DEFAULT_ALERT_KINDS,DEFAULT_GRACE_MS,DEFAULT_RESTART_LOOP} from './alerts.ts';
 import type {AlertEvent,NotifierOptions,TrackerState} from './alerts.ts';
 import {createBeszelHub,hubUrl,hubSystemName} from './beszel.ts';
-import type {HubFetch} from './beszel.ts';
+import type {HubFetch,HubResources} from './beszel.ts';
 import type {Attention,Disk,Snapshot} from './model.ts';
 import http from 'node:http';
 import fs from 'node:fs/promises';
@@ -19,9 +19,8 @@ interface LogUnit{name:string;scope:'user'|'system'}
 export interface HostEntry{name:string;ssh?:string;node?:string;collector?:string;config?:string;adb?:unknown;importantServices?:unknown;logUnits?:unknown;beszelName?:unknown;bestEffort?:unknown;backoffSeconds?:unknown;agentless?:unknown;refreshSeconds?:unknown;timeoutSeconds?:unknown;offlineAfterSeconds?:unknown}
 export interface ServerConfig{hosts:HostEntry[];backoffSeconds?:unknown;hostOrder?:unknown;beszel?:unknown;port?:number;refreshSeconds?:number;importantServices?:unknown;stateDir?:unknown;historyMaxBytes?:number;alerts?:unknown}
 interface Host extends HostEntry{bestEffort:boolean;backoffMs:number[];importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;timeoutSeconds:number;offlineAfterMs?:number}
-// Disk capacity of a host whose resource metrics Beszel owns, read from the hub: `stale` is a record older than ten minutes,
-// `unavailable` a failed read, which keeps the last disks and times so the dashboard can say how old they are.
-interface BeszelState{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
+// Retained metrics carry their hub freshness separately from collector health.
+interface BeszelState extends Partial<HubResources>{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 const BESZEL_STALE_MS=10*60*1000;
 interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string;reachability?:{lastSeen:string|null;nextCheck:string;checks:number}}
 // systemd NRestarts counters by service name; a name present in both scopes adds both counters.
@@ -153,14 +152,14 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
   if(snapshot.schemaVersion!==1||snapshot.host!==h.name||!Array.isArray(snapshot.services)||!Array.isArray(snapshot.attention)||!Number.isFinite(Date.parse(snapshot.collectedAt)))throw new Error('invalid-snapshot');
   return snapshot;
  }
- // A hub failure never changes the host's own status: the card says Beszel is unavailable and keeps the last disks.
+ // A hub failure never changes the host's own status: the card says Beszel is unavailable and retains the last reading with an unavailable state.
  // A reading ages while the hub is not read again, so staleness is decided when the fleet is served.
  const beszelView=(b:BeszelState):BeszelState=>b.status==='ok'&&b.recordedAt&&now()-Date.parse(b.recordedAt)>BESZEL_STALE_MS?{...b,status:'stale'}:b;
  async function readBeszel(h:Host) {
   const previous=beszel.get(h.name);
   try{const read=await hub!.read(typeof h.beszelName==='string'?h.beszelName:h.name),at=now();
-   beszel.set(h.name,{status:'ok',lastSuccess:new Date(at).toISOString(),recordedAt:read.recordedAt,disks:read.disks});}
-  catch{beszel.set(h.name,{status:'unavailable',lastSuccess:previous?.lastSuccess??null,recordedAt:previous?.recordedAt??null,disks:previous?.disks??[]});}
+   beszel.set(h.name,{...read,status:'ok',lastSuccess:new Date(at).toISOString()});}
+  catch{beszel.set(h.name,{...previous,status:'unavailable',lastSuccess:previous?.lastSuccess??null,recordedAt:previous?.recordedAt??null,disks:previous?.disks??[]});}
  }
 // The probe runs `true` over the same ssh alias and options as a collection, with a short timeout, so it follows the host's
 // real transport; it starts no collector and reads nothing.

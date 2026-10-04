@@ -1,4 +1,5 @@
-export const DEFAULT_TAB_ORDER=['resources','disks','checks','events','agents','services'];
+// Keep the stable agents id and v1 storage key: the label changes, saved positions do not.
+export const DEFAULT_TAB_ORDER=['agents','disks','checks','events','services'];
 export interface TabStateStore{getItem(key:string):string|null;setItem(key:string,value:string):void;removeItem(key:string):void}
 export interface TabState{order:string[];selected:string}
 const KEY='host-monitor.hostTabs.v1';

@@ -15,5 +15,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts", "scripts/**/*.mts", "test/**/*.ts"],
-  "exclude": ["scripts/accept-browser.ts", "scripts/accept-sessions.ts"]
+  "exclude": ["scripts/accept-browser.ts", "scripts/accept-sessions.ts", "scripts/accept-detail.ts"]
 }

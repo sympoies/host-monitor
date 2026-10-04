@@ -1,9 +1,10 @@
 import {webhookUrl} from './alerts.ts';
 import type {Disk} from './model.ts';
 // Read-only client for a Beszel hub (PocketBase API). Beszel stays the single source for resource metrics of the hosts
-// that delegate them; this module only reads the latest stats record to show their disk capacity.
+// that delegate them; this module reads only allowlisted metrics from the latest stats record.
 export type HubFetch=(input:URL,init:RequestInit)=>Promise<Pick<Response,'ok'|'status'|'json'>>;
-export interface HubDisks{recordedAt:string;disks:Disk[]}
+export interface HubResources{cpuBusy?:number;memory?:{total:number;used:number;available:number};gpus:{name:string;busy:number}[]}
+export interface HubReading extends HubResources{recordedAt:string;disks:Disk[]}
 const GIB=2**30,tenth=(n:number)=>Math.round(n*10)/10;
 const entry=(mount:string,type:string,v:unknown):Disk|null=>{
  const e=v as {d?:unknown;du?:unknown}|null;
@@ -16,6 +17,24 @@ export function parseBeszelStats(stats:unknown):Disk[] {
  const s=(stats&&typeof stats==='object'?stats:{}) as {efs?:unknown};
  const extra=s.efs&&typeof s.efs==='object'?Object.entries(s.efs).sort(([a],[b])=>a.localeCompare(b)):[];
  return [entry('/','root',s),...extra.map(([name,v])=>entry(name,'extra',v))].filter((d):d is Disk=>d!==null);
+}
+const finite=(v:unknown):v is number=>typeof v==='number'&&Number.isFinite(v);
+const utilization=(v:unknown):v is number=>finite(v)&&v>=0&&v<=100;
+// Beszel m/mu are GiB; m - mu is memory available under the hub’s configured memory calculation.
+// GPU utilization is g[id].u; no container, system identity or arbitrary stats fields are forwarded.
+export function parseBeszelResources(stats:unknown):HubResources {
+ const s=(stats&&typeof stats==='object'?stats:{}) as Record<string,unknown>;
+ const result:HubResources={gpus:[]};
+ if(utilization(s.cpu))result.cpuBusy=s.cpu;
+ if(finite(s.m)&&s.m>0&&finite(s.mu)&&s.mu>=0&&s.mu<=s.m){
+  const total=Math.round(s.m*GIB),used=Math.round(s.mu*GIB);
+  if(Number.isSafeInteger(total))result.memory={total,used,available:total-used};
+ }
+ if(s.g&&typeof s.g==='object'&&!Array.isArray(s.g))for(const [,value] of Object.entries(s.g).sort(([a],[b])=>a.localeCompare(b))){
+  const gpu=value as {n?:unknown;u?:unknown}|null;
+  if(gpu&&typeof gpu.n==='string'&&gpu.n.trim()&&utilization(gpu.u))result.gpus.push({name:gpu.n,busy:gpu.u});
+ }
+ return result;
 }
 export function hubUrl(value:unknown):URL {
  const u=webhookUrl(value);if(u.pathname!=='/'||u.hash)throw new Error('invalid-beszel-url');return u;
@@ -49,17 +68,17 @@ export function createBeszelHub({url,email,password,fetchImpl=fetch as HubFetch,
   if(!match)throw new Error('beszel-unknown-system');
   ids.set(name,match.id);return match.id;
  }
- return {async read(system:string):Promise<HubDisks> {
+ return {async read(system:string):Promise<HubReading> {
   const id=await systemId(system);
   // A system deleted and re-added in the hub gets a new id, so a failed read looks the name up again next time.
   try{return await readStats(id);}catch(error){ids.delete(system);throw error;}
  }};
- async function readStats(id:string):Promise<HubDisks> {
+ async function readStats(id:string):Promise<HubReading> {
   const items=(await get('/api/collections/system_stats/records'+query({filter:`system='${id}'&&type='1m'`,sort:'-created',perPage:'1',fields:'created,stats'}))).items;
   const record=Array.isArray(items)?items[0] as {created?:unknown;stats?:unknown}|undefined:undefined;
   const at=typeof record?.created==='string'?Date.parse(record.created.replace(' ','T')):NaN;
-  const disks=parseBeszelStats(record?.stats);
-  if(!Number.isFinite(at)||!disks.length)throw new Error('beszel-no-stats');
-  return {recordedAt:new Date(at).toISOString(),disks};
+  const disks=parseBeszelStats(record?.stats),resources=parseBeszelResources(record?.stats);
+  if(!Number.isFinite(at)||(!disks.length&&resources.cpuBusy===undefined&&!resources.memory&&!resources.gpus.length))throw new Error('beszel-no-stats');
+  return {recordedAt:new Date(at).toISOString(),disks,...resources};
  }
 }
