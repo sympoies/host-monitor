@@ -238,7 +238,9 @@ The bounded v1 response is a start marker, one `key=value` line for each field
 in `src/router.ts`, and an end marker. Duplicate/extra fields and incomplete
 responses fail collection. `snapshot.router` reports WAN, boot time and schedule
 classification, installed and router-advertised firmware, current connmon loss
-and latency, radio state, client counts, and recent watchdog count. Raw logs,
+and latency, radio state, client counts, recent watchdog count and AdGuard health.
+AdGuard fields cover process, owned port-53 listener, normal DNS resolution,
+known-ad-domain blocking, aggregate query-log bytes and installed version. Raw logs,
 client identities, targets, keys and nvram dumps never enter snapshots. The
 combined reboot mask/time is Sunday-first; boot comparison uses the remote UTC
 offset and 5 min tolerance, and requires synchronized time. Noncurrent or
@@ -249,10 +251,20 @@ Firmware compares numeric version components and requires the router update
 flag; newer releases produce severity `notice`, delivered as `info`. Notices are
 excluded from the silent initial baseline, still respect grace/quiet hours,
 and include the available version in their identity so a later release
-creates a new notice. Other initial attention retains baseline semantics. The router
+creates a new notice. AdGuard process/listener/DNS errors also notify after grace
+on first activation; other initial attention retains baseline semantics. The router
 checker is the advertised-version source, not proof an upgrade is safe. Operators
 cross-check the official model-specific Merlin release directory and changelog,
 then schedule updates with the maintainer. Flashing is never automated. A router
 without Beszel needs its own `offlineAfterSeconds` in server configuration.
 Run `node --test test/router.test.ts` for protocol, configuration and notice
 regressions; installed-data UI acceptance remains with the deployment owner.
+
+AdGuard stable releases come from the fixed official GitHub latest-release API,
+with no credentials, no redirects, a 5 s deadline, 64 KiB response limit and a
+6 h success/failure cache. An unavailable release check produces unknown warning
+attention without failing router collection. A newer version is notice-only;
+updating binaries/configuration is never automated. Query-log sizes use metadata,
+not contents; a readable data directory without matching files reports zero.
+At 1 GiB the aggregate size warns so operators can inspect retention/capacity.
+The deployment wrapper bounds each fixed DNS lookup and exports only booleans.

@@ -1,4 +1,5 @@
-import {ROUTER_COMMAND,routerSnapshot} from './router.ts';
+import {ROUTER_COMMAND,routerSnapshot,createAdGuardReleaseCheck} from './router.ts';
+import type {ReleaseFetch} from './router.ts';
 import {projectSnapshot} from './schema.ts';
 import {AGENTLESS_SCRIPT,agentlessSnapshot} from './agentless.ts';
 import {ADB_SCRIPT,adbSerial,adbBinary,androidSnapshot} from './android.ts';
@@ -86,8 +87,9 @@ function alertOptions(value:unknown,hostNames:string[]) {
   return {webhookUrl:alerts.webhookUrl,authEnv:alerts.authEnv as string|undefined,kinds:(alerts.kinds as string[]|undefined)??DEFAULT_ALERT_KINDS,quietHours:alerts.quietHours,offlineAfterMs:offlineAfterSeconds*1000,...graceOptions(alerts,hostNames)};
  }catch(error){throw new Error('invalid-alerts: '+(error as Error).message);}
 }
-export interface MonitorOptions{run?:Runner;now?:()=>number;fetch?:NotifierOptions['fetchImpl'];sleep?:NotifierOptions['sleep'];env?:Record<string,string|undefined>;log?:(message:string)=>void}
-export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),fetch:fetchImpl=fetch,sleep,env=process.env,log=message=>console.error(message)}:MonitorOptions={}) {
+export interface MonitorOptions{run?:Runner;now?:()=>number;fetch?:NotifierOptions['fetchImpl'];releaseFetch?:ReleaseFetch;sleep?:NotifierOptions['sleep'];env?:Record<string,string|undefined>;log?:(message:string)=>void}
+export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),fetch:fetchImpl=fetch,releaseFetch=fetch,sleep,env=process.env,log=message=>console.error(message)}:MonitorOptions={}) {
+ const adguardRelease=createAdGuardReleaseCheck({fetchImpl:releaseFetch,now});
  const defaultRefresh=config.refreshSeconds??20;
  const defaultBackoff=config.backoffSeconds===undefined?backoffMs(DEFAULT_BACKOFF):backoffMs(config.backoffSeconds);
  const hosts:Host[]=config.hosts.map(h=>({...h,bestEffort:h.bestEffort===true,backoffMs:h.backoffSeconds===undefined?defaultBackoff:backoffMs(h.backoffSeconds),importantServices:serviceMarkers(h.importantServices??config.importantServices),logUnits:logUnits(h.logUnits),refreshSeconds:seconds(h.refreshSeconds,defaultRefresh,1,86400),timeoutSeconds:seconds(h.timeoutSeconds,30,0.001,600),...(h.offlineAfterSeconds===undefined?{}:{offlineAfterMs:seconds(h.offlineAfterSeconds,0,0,31536000)*1000})}));
@@ -114,7 +116,8 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
  const history=createHistory({dir:stateDir,maxBytes:config.historyMaxBytes,log});
  const notifier=alerts&&createNotifier({url:alerts.webhookUrl,authEnv:alerts.authEnv,env,kinds:alerts.kinds,quietHours:alerts.quietHours,fetchImpl,...(sleep?{sleep}:{}),log});
  const stateFile=stateDir&&path.join(stateDir,'alert-state.json');
- const trackerOptions={offlineAfterMs:alerts?.offlineAfterMs??300000,...(alerts?{graceMs:alerts.graceMs,restartLoop:alerts.restartLoop}:{})};
+ const criticalAdGuard=new Set(['AdGuard process stopped','AdGuard DNS listener missing','AdGuard DNS resolution failed']);
+ const trackerOptions={initialAlert:(host:string,a:Attention)=>hosts.some(h=>h.name===host&&h.router===true)&&a.severity==='error'&&criticalAdGuard.has(a.title),offlineAfterMs:alerts?.offlineAfterMs??300000,...(alerts?{graceMs:alerts.graceMs,restartLoop:alerts.restartLoop}:{})};
  let tracker=createTracker(trackerOptions),savedState='',saving=Promise.resolve(),activeLogReads=0;
  // Saved attention state keeps a restart from re-announcing items that were already notified.
  const ready=(async()=>{try{await history.load();if(stateFile){const saved:unknown=JSON.parse(await fs.readFile(stateFile,'utf8').catch(()=>'{}'));tracker=createTracker({...trackerOptions,state:saved&&typeof saved==='object'?saved as TrackerState:{}});}}catch{log('host-monitor: state unavailable; starting without history');}})();
@@ -144,7 +147,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    const output=remote?await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,bin,'-s',adb.serial,'shell',"'"+ADB_SCRIPT.replaceAll("'","'\\''")+"'"]):await execute(h,bin,['-s',adb.serial,'shell',ADB_SCRIPT]);
    snapshot=projectSnapshot(androidSnapshot(h.name,output,now()));
   }else if(h.router===true){
-   snapshot=routerSnapshot(h.name,await execute(h,'ssh',['-F',h.sshConfig as string,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,ROUTER_COMMAND]),now());
+   snapshot=routerSnapshot(h.name,await execute(h,'ssh',['-F',h.sshConfig as string,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,ROUTER_COMMAND]),now(),await adguardRelease.read());
   }else if(h.agentless===true){
    snapshot=projectSnapshot(agentlessSnapshot(h.name,await execute(h,'ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',h.ssh!,AGENTLESS_SCRIPT]),now()));
   }else{
