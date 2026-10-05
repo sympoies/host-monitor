@@ -73,11 +73,11 @@ export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GR
   const s=get(host),events:AlertEvent[]=[];s.offlineSince=null;
   if(s.offlineAlerted){s.offlineAlerted=false;events.push(event(at,host,'online',{kind:'host',title:host,severity:'ok'}));}
   const next=new Map<string,Attention>();for(const a of attention)next.set(key(a.kind,a.title),{kind:a.kind,title:a.title,severity:a.severity,...(a.detail?{detail:a.detail}:{})});
-  if(!s.known){s.known=true;s.baseline=new Map(next);}
+  if(!s.known){s.known=true;s.baseline=new Map([...next].filter(([,a])=>a.severity!=='notice'));}
   const started=(k:string,count:number)=>{const times=s.episodes.get(k)??[];for(let i=0;i<Math.min(count,100);i++)times.push(at);s.episodes.set(k,times);};
   const counted=new Set<string>(),recent=s.lastOnline!==null&&at-s.lastOnline<=restartLoop.windowMs;s.lastOnline=at;
   for(const [name,count] of Object.entries(restarts)){const k=key('service',name),last=s.restarts.get(name);counted.add(k);s.restarts.set(name,count);if(last!==undefined&&recent)started(k,count>=last?count-last:count);}
-  for(const [k,a] of next){const seen=s.seen.get(k);if(seen){seen.item=a;continue;}s.seen.set(k,{item:a,since:at});if(!counted.has(k)&&!s.baseline.has(k))started(k,1);}
+  for(const [k,a] of next){const seen=s.seen.get(k);if(seen){seen.item=a;continue;}s.seen.set(k,{item:a,since:at});if(!counted.has(k)&&!s.baseline.has(k)&&a.severity!=='notice')started(k,1);}
   for(const k of [...s.seen.keys()])if(!next.has(k))s.seen.delete(k);
   for(const [k,times] of s.episodes){const recent=times.filter(t=>at-t<restartLoop.windowMs);if(recent.length)s.episodes.set(k,recent);else s.episodes.delete(k);}
   for(const k of [...s.baseline.keys()])if(!next.has(k))s.baseline.delete(k);
@@ -112,7 +112,7 @@ export function createNotifier({url,authEnv,env=process.env,kinds=DEFAULT_ALERT_
  const clip=(s:string)=>s.length>3500?s.slice(0,3499)+'…':s;
  function format(e:AlertEvent):Message {
   const title=`${MESSAGE_PREFIX} ${e.host}: `;
-  if(e.type==='attention')return {title:title+`${e.kind} needs attention`,body:e.title+(e.detail?` — ${e.detail}`:''),type:e.severity==='error'?'failure':'warning'};
+  if(e.type==='attention')return {title:title+`${e.kind} needs attention`,body:e.title+(e.detail?` — ${e.detail}`:''),type:e.severity==='error'?'failure':e.severity==='notice'?'info':'warning'};
   if(e.type==='recovered')return {title:title+`${e.kind} recovered`,body:e.title,type:'success'};
   if(e.type==='offline')return {title:title+'collector unreachable',body:e.detail??'no successful collection',type:'failure'};
   return {title:title+'collector reachable again',body:'collection succeeded',type:'success'};
