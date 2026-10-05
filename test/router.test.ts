@@ -3,7 +3,7 @@ import {once} from 'node:events';
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {routerSnapshot,ROUTER_COMMAND,createAdGuardReleaseCheck} from '../src/router.ts';import {createMonitor} from '../src/server.ts';
 const epoch=Date.parse('2026-10-06T00:00:00+08:00')/1000;
-const output=(boot='2026-10-05T06:31:00+08:00')=>`host-monitor-router-v1\nepoch=${epoch}\nuptime=${epoch-Date.parse(boot)/1000}\ncpu_count=4\nkernel=4.19.183\nfirmware=3006.102.7_2\nwan_state=2\nreboot_schedule=01001000630\nutc_offset=+0800\nntp_ready=1\nwebs_state_flag=1\nwebs_state_info=3006_102_9_0\nconnmon=${epoch-60}|2.4|0\nwatchdog_count=0\nradio0=1\nradio1=1\nclients0=3\nclients1=2\nagh_process=1\nagh_listener=1\nagh_dns=1\nagh_blocked=1\nagh_querylog_bytes=4096\nagh_version=0.107.79\nhost-monitor-router-end\n`;
+const output=(boot='2026-10-05T06:31:00+08:00')=>`host-monitor-router-v1\nepoch=${epoch}\nuptime=${epoch-Date.parse(boot)/1000}\ncpu_count=4\nkernel=4.19.183\nfirmware=3006.102.7_2\nwan_state=2\nreboot_schedule=01001000630\nutc_offset=+0800\nntp_ready=1\nwebs_state_flag=1\nwebs_state_info=3006_102_9_0\nconnmon=${epoch-60}|2.4|0\nwatchdog_count=0\nradio0=1\nradio1=1\nclients0=3\nclients1=2\nagh_process=1\nagh_listener=1\nagh_dns=1\nagh_blocked=1\nagh_querylog_bytes=4096\nagh_version=0.107.79\nagh_dns_method=dig\nhost-monitor-router-end\n`;
 test('router has WAN, uptime, scheduled boot, connmon, radio and firmware notice',()=>{
  const s=routerSnapshot('appliance',output(),epoch*1000);assert.equal(s.hardware.uptime,62940);assert.equal(s.router?.scheduledBoot,true);assert.equal(s.router?.firmwareAvailable,'3006.102.9_0');assert.equal(s.router?.connmon?.latencyMs,2.4);assert.equal(s.router?.clients0,3);
  assert.deepEqual(s.attention.map(a=>[a.title,a.severity]),[['Merlin firmware update 3006.102.9_0','notice']]);
@@ -93,4 +93,9 @@ test('AdGuard DNS failure present on initial router activation alerts once after
  await m.refresh();await m.idle();assert.equal(bodies.length,0);clock+=90000;await m.refresh();await m.idle();
  assert.equal(bodies.length,1);assert.equal(bodies[0].type,'failure');assert.ok(bodies[0].body.includes('AdGuard DNS resolution failed'));
  await m.refresh();await m.idle();assert.equal(bodies.length,1);m.stop();
+});
+
+test('router reports the bounded DNS query method',()=>{
+ const wire=output();
+ assert.equal((routerSnapshot('r',wire,epoch*1000).router?.adguard as any).dnsMethod,'dig');
 });

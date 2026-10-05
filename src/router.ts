@@ -1,8 +1,8 @@
 // Read-only Merlin wire protocol. Infra owns the fixed forced-command script and its key binding.
 import type {Attention,Snapshot} from './model.ts';
 export const ROUTER_COMMAND='host-monitor-router-v1';
-export interface RouterInfo {wanState:number|null;bootAt:string;scheduledBoot:boolean|null;firmwareInstalled:string;firmwareAvailable:string|null;connmon:{at:string;latencyMs:number;lossPercent:number}|null;watchdogCount:number|null;radio0:number|null;radio1:number|null;clients0:number|null;clients1:number|null;adguard:{process:boolean|null;listener:boolean|null;dns:boolean|null;blocked:boolean|null;querylogBytes:number|null;versionInstalled:string|null;versionAvailable:string|null}}
-const fields=['epoch','uptime','cpu_count','kernel','firmware','wan_state','reboot_schedule','utc_offset','ntp_ready','webs_state_flag','webs_state_info','connmon','watchdog_count','radio0','radio1','clients0','clients1','agh_process','agh_listener','agh_dns','agh_blocked','agh_querylog_bytes','agh_version'];
+export interface RouterInfo {wanState:number|null;bootAt:string;scheduledBoot:boolean|null;firmwareInstalled:string;firmwareAvailable:string|null;connmon:{at:string;latencyMs:number;lossPercent:number}|null;watchdogCount:number|null;radio0:number|null;radio1:number|null;clients0:number|null;clients1:number|null;adguard:{dnsMethod:'dig'|'nslookup'|null;process:boolean|null;listener:boolean|null;dns:boolean|null;blocked:boolean|null;querylogBytes:number|null;versionInstalled:string|null;versionAvailable:string|null}}
+const fields=['epoch','uptime','cpu_count','kernel','firmware','wan_state','reboot_schedule','utc_offset','ntp_ready','webs_state_flag','webs_state_info','connmon','watchdog_count','radio0','radio1','clients0','clients1','agh_process','agh_listener','agh_dns','agh_blocked','agh_querylog_bytes','agh_version','agh_dns_method'];
 function version(v:string):number[]|null {return /^\d{4}\.\d{1,3}\.\d{1,3}_\d{1,3}$/.test(v)?v.split(/[._]/).map(Number):null;}
 export function routerSnapshot(host:string,text:string,nowMs:number,adguardLatest?:string|null):Snapshot {
  const bad=()=>new Error('invalid-router-output');
@@ -34,11 +34,12 @@ export function routerSnapshot(host:string,text:string,nowMs:number,adguardLates
  const watchdogCount=num('watchdog_count',0,10000);if(watchdogCount===null)add('Syslog unavailable','Recent watchdog count unknown');else if(watchdogCount>=10)add('ASUS watchdog loop',`${watchdogCount} stop_aae/start_mastiff records in last 10 min (bounded syslog tail)`);
  const radio0=num('radio0',0,1),radio1=num('radio1',0,1);if(radio0===null||radio1===null)add('Wi-Fi radio state unknown','One or more wl radio states unavailable');else if(radio0===0||radio1===0)add('Wi-Fi radio disabled','One or more radios disabled; check configured schedule before changing settings');
  const flag=(key:string):boolean|null=>data[key]==='1'?true:data[key]==='0'?false:null;
- const adguard:RouterInfo['adguard']={process:flag('agh_process'),listener:flag('agh_listener'),dns:flag('agh_dns'),blocked:flag('agh_blocked'),querylogBytes:num('agh_querylog_bytes',0,Number.MAX_SAFE_INTEGER),versionInstalled:/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(data.agh_version)?data.agh_version:null,versionAvailable:adguardLatest??null};
+ const adguard:RouterInfo['adguard']={dnsMethod:data.agh_dns_method==='dig'||data.agh_dns_method==='nslookup'?data.agh_dns_method:null,process:flag('agh_process'),listener:flag('agh_listener'),dns:flag('agh_dns'),blocked:flag('agh_blocked'),querylogBytes:num('agh_querylog_bytes',0,Number.MAX_SAFE_INTEGER),versionInstalled:/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(data.agh_version)?data.agh_version:null,versionAvailable:adguardLatest??null};
  for(const [key,title,severity] of [['process','AdGuard process stopped','error'],['listener','AdGuard DNS listener missing','error'],['dns','AdGuard DNS resolution failed','error'],['blocked','AdGuard ad blocking failed','warning']] as const){
   if(adguard[key]===false)add(title,key==='dns'?'Normal domain did not resolve through the LAN DNS server':key==='blocked'?'Known ad domain did not resolve to 0.0.0.0':'Read-only AdGuard health check failed',severity);
   else if(adguard[key]===null)add('AdGuard '+key+' check unavailable','Read-only health signal unknown');
  }
+ if(adguard.dnsMethod===null)add('AdGuard DNS method unavailable','Probe method unknown');
  if(adguard.querylogBytes===null)add('AdGuard query log size unavailable','Size could not be read');
  else if(adguard.querylogBytes>=1024**3)add('AdGuard query log size',`${adguard.querylogBytes} bytes across querylog.json* (1 GiB warning threshold; inspect retention and disk capacity)`);
  if(adguard.versionInstalled===null)add('AdGuard version unavailable','Installed binary did not report a valid stable version');
