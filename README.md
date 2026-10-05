@@ -11,3 +11,6 @@ The dashboard retains accurate offline/stale state, shows installed inactive ser
 Use Node 24 or newer. The code is TypeScript that Node runs directly; run `npm ci` once for the pinned type-checking dev dependencies, then `npm run validate`. Configure each host and the central server as described in [DEVELOPMENT.md](DEVELOPMENT.md). Infrastructure owns host identities, required services, loopback probes, installation, restart, rollback, and tailnet routing. A new host is a configuration entry, not another copy of the web application.
 
 The app currently runs as a native user service with an immutable installed artifact. It does not build inside a host Compose stack. Preserve the last installed release for rollback, and verify both host snapshots and rendered browser behavior before declaring deployment complete.
+
+Read-only ASUSWRT-Merlin router probes use a dedicated restricted SSH identity;
+see [the protocol and deployment contract](DEVELOPMENT.md#read-only-merlin-router-probe).
