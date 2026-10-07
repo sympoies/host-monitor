@@ -1,3 +1,4 @@
+import {projectJobs,jobAttention} from './jobs.ts';
 import {projectSessions} from './sessions.ts';
 import type {Snapshot} from './model.ts';
 type Convert<T>=(value:unknown)=>T;
@@ -17,6 +18,7 @@ const numericList=list(number,16);
 // here, and consumers must tolerate any other field being absent.
 export function projectSnapshot(value:unknown):Snapshot{
  const snapshot=object(value,{
+  jobs:(value:unknown)=>value===undefined?undefined:projectJobs(value),
   schemaVersion:number,host:name,collectedAt:name,platform:name,resources:(value:unknown)=>value==='collected'||value==='external'?value:undefined,agentless:boolean,agentSessions:(value:unknown)=>value===undefined?undefined:projectSessions(value),
   hardware:record({cpuCount:number,cpuModel:str,cpuBusy:number,load:numericList,uptime:number,kernel:name}),
   memory:(value:unknown)=>value===undefined?undefined:object(value,{total:number,available:number,used:number,swapTotal:number,swapUsed:number}),
@@ -33,5 +35,7 @@ export function projectSnapshot(value:unknown):Snapshot{
  });
  if(snapshot.schemaVersion!==1||!snapshot.host||!Number.isFinite(Date.parse(snapshot.collectedAt??''))||!snapshot.hardware?.cpuCount||!Array.isArray(snapshot.hardware.load))throw Error('invalid-snapshot-header');
  for(const s of snapshot.services??[])if(!s.name||!['user','system'].includes(s.scope??'')||!['ok','error','idle','inactive','transition','unknown'].includes(s.health??''))throw Error('invalid-service-snapshot');
- return snapshot as unknown as Snapshot;
+ const projected=snapshot as unknown as Snapshot;
+ projected.attention=[...projected.attention.filter(item=>item.kind!=='job'),...jobAttention(projected.jobs)];
+ return projected;
 }

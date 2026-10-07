@@ -13,7 +13,7 @@ type Log=(message:string)=>void;
 
 // Beszel owns resource thresholds; by default host-monitor notifies for service-semantic attention and for Android
 // device attention, which Beszel cannot collect (fleet-infra decision 0003).
-export const DEFAULT_ALERT_KINDS=['service','unit','container','probe','device'];
+export const DEFAULT_ALERT_KINDS=['service','unit','container','probe','device','job'];
 export const MESSAGE_PREFIX='[host-monitor]';
 const key=(kind:string,title:string)=>kind+'\0'+title;
 const bounded=(v:unknown,max=512)=>typeof v==='string'&&v.length<=max?v:undefined;
@@ -73,15 +73,15 @@ export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GR
   const s=get(host),events:AlertEvent[]=[];s.offlineSince=null;
   if(s.offlineAlerted){s.offlineAlerted=false;events.push(event(at,host,'online',{kind:'host',title:host,severity:'ok'}));}
   const next=new Map<string,Attention>();for(const a of attention)next.set(key(a.kind,a.title),{kind:a.kind,title:a.title,severity:a.severity,...(a.detail?{detail:a.detail}:{})});
-  if(!s.known){s.known=true;s.baseline=new Map([...next].filter(([,a])=>a.severity!=='notice'&&!initialAlert(host,a)));}
+  if(!s.known){s.known=true;s.baseline=new Map([...next].filter(([,a])=>a.kind!=='job'&&a.severity!=='notice'&&!initialAlert(host,a)));}
   const started=(k:string,count:number)=>{const times=s.episodes.get(k)??[];for(let i=0;i<Math.min(count,100);i++)times.push(at);s.episodes.set(k,times);};
   const counted=new Set<string>(),recent=s.lastOnline!==null&&at-s.lastOnline<=restartLoop.windowMs;s.lastOnline=at;
   for(const [name,count] of Object.entries(restarts)){const k=key('service',name),last=s.restarts.get(name);counted.add(k);s.restarts.set(name,count);if(last!==undefined&&recent)started(k,count>=last?count-last:count);}
-  for(const [k,a] of next){const seen=s.seen.get(k);if(seen){seen.item=a;continue;}s.seen.set(k,{item:a,since:at});if(!counted.has(k)&&!s.baseline.has(k)&&a.severity!=='notice')started(k,1);}
+  for(const [k,a] of next){const seen=s.seen.get(k);if(seen){if(a.kind==='job'&&seen.item.detail!==a.detail)seen.since=at;seen.item=a;continue;}s.seen.set(k,{item:a,since:at});if(!counted.has(k)&&!s.baseline.has(k)&&a.severity!=='notice')started(k,1);}
   for(const k of [...s.seen.keys()])if(!next.has(k))s.seen.delete(k);
   for(const [k,times] of s.episodes){const recent=times.filter(t=>at-t<restartLoop.windowMs);if(recent.length)s.episodes.set(k,recent);else s.episodes.delete(k);}
   for(const k of [...s.baseline.keys()])if(!next.has(k))s.baseline.delete(k);
-  for(const [k,{item,since}] of s.seen)if(!s.alerted.has(k)&&!s.baseline.has(k)&&at-since>=grace(host,item)){s.alerted.set(k,item);events.push(event(at,host,'attention',item));}
+  for(const [k,{item,since}] of s.seen)if((!s.alerted.has(k)||item.kind==='job'&&s.alerted.get(k)?.detail!==item.detail)&&!s.baseline.has(k)&&at-since>=grace(host,item)){s.alerted.set(k,item);events.push(event(at,host,'attention',item));}
   for(const [k,times] of s.episodes)if(looping(times)&&!s.alerted.has(k)&&!s.baseline.has(k)){
    const [kind,title]=k.split('\0'),minutes=Math.round(restartLoop.windowMs/60000);
    s.loops.add(k);const item={kind,title,severity:'error',detail:counted.has(k)?`restart loop · ${times.length} restarts in ${minutes} min`:`flapping · ${times.length} failures in ${minutes} min`};

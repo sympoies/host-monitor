@@ -1,3 +1,5 @@
+import {collectJobs,nativeJobState,validateJobConfig} from './jobs.ts';
+import type {JobConfig} from './jobs.ts';
 import {collectSessions} from './sessions.ts';
 import type {SessionConfig} from './sessions.ts';
 import fs from 'node:fs/promises';
@@ -9,7 +11,7 @@ import {parseMeminfo,cpuBusy,parseDisks,parseProperties,classifyUnit,attentionFo
 import type {Service,FailedUnit,JournalEntry,Snapshot,LaunchdJob,LaunchdRow} from './model.ts';
 export type Run=(bin:string,args:string[])=>Promise<string>;
 export type Stream=(bin:string,args:string[],onLine:(line:string)=>void,options?:{timeout?:number;maxLines?:number})=>Promise<void>;
-export interface HostConfig{name:string;identity?:string;required?:{user?:string[];system?:string[]};probes?:{name:string;url:string}[];docker?:boolean;requiredContainers?:string[];nvidia?:boolean;agentSessions?:SessionConfig}
+export interface HostConfig{jobs?:JobConfig;name:string;identity?:string;required?:{user?:string[];system?:string[]};probes?:{name:string;url:string}[];docker?:boolean;requiredContainers?:string[];nvidia?:boolean;agentSessions?:SessionConfig}
 type Scope='user'|'system';
 interface LogTarget{label:string;scope:string;process:string}
 const exec=promisify(execFile);
@@ -55,20 +57,20 @@ export const streamLines:Stream=(bin,args,onLine,{timeout=20000,maxLines=500000}
 };
 // macOS: user agents live in the gui/<uid> domain (user/<uid> without a login session), daemons in the system domain.
 // Both are readable without privileges. Detail is read only for required labels; the domain list covers the rest.
-export async function collectLaunchd(scope:string,required:string[]=[],{uid=process.getuid?.(),run=command}:{uid?:number;run?:Run}={}):Promise<{services:Service[];logTargets:LogTarget[]}> {
+export async function collectLaunchd(scope:string,required:string[]=[],{uid=process.getuid?.(),run=command,scheduled=[]}:{uid?:number;run?:Run;scheduled?:string[]}={}):Promise<{services:Service[];logTargets:LogTarget[]}> {
  if(scope==='user'&&!Number.isInteger(uid))throw new Error('uid-unavailable');
  let domain=scope==='user'?'gui/'+uid:'system',text;
  try{text=await run('launchctl',['print',domain]);}catch(error){if(scope!=='user')throw error;domain='user/'+uid;text=await run('launchctl',['print',domain]);}
  const inventory=new Map<string,LaunchdRow>(parseLaunchdServices(text).map(r=>[r.label,r]));
- const wanted=required.filter(launchdLabel);
+ const wanted=[...new Set([...required,...scheduled])].filter(launchdLabel);
  const details=new Map<string,LaunchdJob|null>(await Promise.all(wanted.map(async(label):Promise<[string,LaunchdJob|null]>=>{try{return [label,parseLaunchdJob(await run('launchctl',['print',domain+'/'+label]))];}catch{return [label,null];}})));
  const services=[...new Set([...inventory.keys(),...wanted])].map((name):Service=>{
-  const r=inventory.get(name),d=details.get(name),isRequired=wanted.includes(name);
+  const r=inventory.get(name),d=details.get(name),isRequired=required.includes(name);
   const job:LaunchdJob=d?{...d,installed:'loaded'}:r?{type:scope==='user'?'LaunchAgent':'LaunchDaemon',state:r.pid>0?'running':'not running',exitCode:r.status!==null&&r.status>=0?r.status:null,signal:r.status!==null&&r.status<0?-r.status:null,periodic:false,installed:'loaded'}:{type:'',state:'not loaded',exitCode:null,signal:null,periodic:false,installed:'missing'};
   const result=job.state==='running'?'':job.signal!=null?'signal':job.exitCode===0?'success':job.exitCode!=null?'exit-code':'';
-  return {name,scope,manager:'launchd',description:name,installed:job.installed,active:job.state==='running'?'active':job.state==='spawn scheduled'?'activating':'inactive',sub:job.state,type:job.type,result,exitCode:job.exitCode,memoryBytes:null,lastExit:null,lastStarted:null,triggers:job.periodic?'interval':'',required:isRequired,health:classifyLaunchdJob(job,isRequired)};
+  return {name,scope,manager:'launchd',description:name,installed:job.installed,active:job.state==='running'?'active':job.state==='spawn scheduled'?'activating':'inactive',sub:job.state,type:job.type,result,exitCode:job.exitCode,memoryBytes:null,lastExit:null,lastStarted:null,triggers:job.periodic?'interval':scheduled.includes(name)&&r&&!d?'unknown':'',required:isRequired,health:classifyLaunchdJob(job,isRequired)};
  });
- return {services,logTargets:wanted.flatMap(label=>{const process=details.get(label)?.process;return process?[{label,scope,process}]:[];})};
+ return {services,logTargets:required.filter(launchdLabel).flatMap(label=>{const process=details.get(label)?.process;return process?[{label,scope,process}]:[];})};
 }
 // Error counts for required jobs, attributed by process name (and uid for user agents). Message text is never read out.
 export async function launchdLogErrors(targets:LogTarget[],{uid=process.getuid?.(),stream=streamLines}:{uid?:number;stream?:Stream}={}):Promise<JournalEntry[]> {
@@ -91,6 +93,7 @@ async function gpu() {
 }
 export async function collect(config:HostConfig,{platform=process.platform,hostname=os.hostname(),uid=process.getuid?.(),run=command,stream=streamLines}:{platform?:string;hostname?:string;uid?:number;run?:Run;stream?:Stream}={}):Promise<Snapshot> {
  if(!hostIdentityMatches(hostname,config))throw new Error('host-identity-mismatch');
+ validateJobConfig(config.jobs);
  const darwin=platform==='darwin';
  // Resource metrics on macOS come from Beszel by design, so they are marked external rather than reported as failures.
  const result:Snapshot={schemaVersion:1,host:config.name,platform,resources:darwin?'external':'collected',collectedAt:new Date().toISOString(),hardware:{cpuCount:os.cpus().length,cpuModel:os.cpus()[0]?.model,load:os.loadavg(),uptime:os.uptime(),kernel:os.release()},collectionIssues:[],services:[],failedUnits:[],containers:[],journalErrors:[],probes:[],attention:[]};
@@ -99,7 +102,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
  const sessions=collectSessions(config.agentSessions,run===command?undefined:async(bin,args)=>run(bin,args));
  const scopes:Scope[]=['system','user'];
  await Promise.all(darwin?[
-  (async()=>{const byScope:Partial<Record<Scope,LogTarget[]>>={};await Promise.all((['user','system'] as Scope[]).map(scope=>part(scope+' services',()=>collectLaunchd(scope,config.required?.[scope]??[],{uid,run}),v=>{result.services.push(...v.services);byScope[scope]=v.logTargets;})));
+  (async()=>{const byScope:Partial<Record<Scope,LogTarget[]>>={};await Promise.all((['user','system'] as Scope[]).map(scope=>part(scope+' services',()=>collectLaunchd(scope,config.required?.[scope]??[],{uid,run,scheduled:scope==='user'?(config.jobs?.entries??[]).map(job=>job.label):[]}),v=>{result.services.push(...v.services);byScope[scope]=v.logTargets;})));
    await part('error log',()=>launchdLogErrors([...byScope.user??[],...byScope.system??[]],{uid,stream}),v=>result.journalErrors.push(...v));})(),
   ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
   ...probes(),
@@ -117,6 +120,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
   ...probes(),
  ]);
  result.agentSessions=await sessions;
+ result.jobs=await collectJobs(config.jobs,config.name,{native:(job,signal)=>nativeJobState(job,platform,result.services,run===command?async(bin,args)=>(await exec(bin,args,{timeout:2000,maxBuffer:16384,encoding:'utf8',signal})).stdout:run,!result.collectionIssues.includes('user services unavailable'))});
  for(const name of config.requiredContainers??[]){const c=result.containers.find(c=>c.name===name);if(!c)result.containers.push({name,image:'Configured service',state:'missing',status:'Container missing',health:'unhealthy'});else if(c.state!=='running')c.health='unhealthy';}
  result.services.sort((a,b)=>a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name));result.attention=attentionFor(result);return result;
 }
