@@ -1,4 +1,6 @@
 import type {RouterInfo} from './router.ts';
+import {jobAttention} from './jobs.ts';
+import type {JobInventory} from './jobs.ts';
 import type {SessionInventory} from './sessions.ts';
 export type Health='ok'|'error'|'idle'|'inactive'|'transition'|'unknown';
 export interface MemInfo{total:number;available:number;used:number;swapTotal:number;swapUsed:number}
@@ -15,9 +17,9 @@ export interface AndroidBattery{level:number;health:string;temperature:number;st
 export interface AndroidSensor{name:string;temperature:number}
 /** Device state read over adb (fleet-infra decision 0003). `protection` is Samsung battery protection; null when the device has none. */
 export interface AndroidInfo{model?:string;release?:string;battery?:AndroidBattery;protection?:boolean|null;thermal?:{status:number;sensors:AndroidSensor[]}}
-export interface Snapshot{schemaVersion:number;host:string;collectedAt:string;platform?:string;resources?:'collected'|'external';agentless?:boolean;router?:RouterInfo;agentSessions?:SessionInventory;hardware:Hardware;memory?:MemInfo;disks?:Disk[];services:Service[];failedUnits:FailedUnit[];containers:Container[];journalErrors:JournalEntry[];collectionIssues:string[];probes:Probe[];gpus?:Gpu[];android?:AndroidInfo;attention:Attention[]}
+export interface Snapshot{schemaVersion:number;host:string;collectedAt:string;platform?:string;resources?:'collected'|'external';agentless?:boolean;router?:RouterInfo;jobs?:JobInventory;agentSessions?:SessionInventory;hardware:Hardware;memory?:MemInfo;disks?:Disk[];services:Service[];failedUnits:FailedUnit[];containers:Container[];journalErrors:JournalEntry[];collectionIssues:string[];probes:Probe[];gpus?:Gpu[];android?:AndroidInfo;attention:Attention[]}
 /** The fields attentionFor reads; tests pass partial snapshots. */
-export interface AttentionInput{collectionIssues?:string[];services?:Pick<Service,'name'|'scope'|'health'|'active'|'result'|'sub'>[];failedUnits?:FailedUnit[];containers?:Pick<Container,'name'|'health'|'state'>[];disks?:Pick<Disk,'mount'|'percent'>[];memory?:Pick<MemInfo,'available'|'total'>;probes?:Pick<Probe,'name'|'ok'|'status'>[];journalErrors?:Pick<JournalEntry,'unit'|'count'>[]}
+export interface AttentionInput{jobs?:JobInventory;collectionIssues?:string[];services?:Pick<Service,'name'|'scope'|'health'|'active'|'result'|'sub'>[];failedUnits?:FailedUnit[];containers?:Pick<Container,'name'|'health'|'state'>[];disks?:Pick<Disk,'mount'|'percent'>[];memory?:Pick<MemInfo,'available'|'total'>;probes?:Pick<Probe,'name'|'ok'|'status'>[];journalErrors?:Pick<JournalEntry,'unit'|'count'>[]}
 export interface UnitState{name:string;active?:string;result?:string;type?:string}
 export function parseMeminfo(text:string):MemInfo {
   const values:Record<string,number> = Object.fromEntries(text.trim().split('\n').map(line => {
@@ -59,6 +61,7 @@ export function attentionFor(snapshot:AttentionInput):Attention[] {
   if(snapshot.memory && snapshot.memory.available/snapshot.memory.total < .1) events.push({severity:'warning',kind:'memory',title:'Memory available below 10%'});
   for(const probe of snapshot.probes??[]) if(!probe.ok) events.push({severity:'error',kind:'probe',title:probe.name,detail:probe.status?`HTTP ${probe.status}`:'Endpoint unavailable'});
   for(const entry of snapshot.journalErrors??[]) events.push({severity:'warning',kind:'journal',title:entry.unit,detail:`${entry.count} errors in the last hour`});
+  events.push(...jobAttention(snapshot.jobs));
   return events;
 }
 export function parseContainers(text:string):Container[] {

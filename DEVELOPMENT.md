@@ -268,3 +268,46 @@ updating binaries/configuration is never automated. Query-log sizes use metadata
 not contents; a readable data directory without matching files reports zero.
 At 1 GiB the aggregate size warns so operators can inspect retention/capacity.
 The deployment wrapper bounds each fixed DNS lookup and exports only booleans.
+
+### Scheduled-job metadata
+
+A collector may configure `jobs: {statusDir, entries}`. `statusDir` is an absolute
+internal-disk directory containing `host-jobs.status.v1` snapshots; each of at
+most 128 entries has `id`, `label`, `registryRevision`, `sourceRevision`,
+`runtimeRevision`, `entrypointRevision`, `deadlineSeconds`,
+`lastSuccessSlaSeconds` and `staleAfterSeconds`. Generate these expectations from
+the same authoritative deployment receipt that the scheduler uses; do not keep
+a second editable schedule registry. Labels are base systemd service/timer names
+on Linux, or exact LaunchAgent labels on macOS. No endpoints, credentials,
+commands or business payloads belong in this declaration.
+
+Collection reads only configured regular non-symlink files (16 KiB each), with
+a two-second whole-inventory collection deadline and at most 128 jobs. One
+fixed Node helper owns filesystem reads; expiry kills it, closes its pipes and
+cancels native metadata commands. An unreaped helper prevents another launch. It never scans a
+volume, bootstraps uv, runs an entrypoint or calls a job's external dependencies.
+Removable and protected paths are rejected, including canonical symlink targets;
+the directory must share the internal home or system filesystem. The existing
+native inventory checks for the label; Linux also reads only the matching
+timer's load/enabled/active fields. Missing or disabled native triggers,
+revision drift, stale/unreadable snapshots and missing last-success data cannot
+be healthy. Inactive successful oneshots remain normal.
+
+Snapshots expose an allowlisted `jobs` inventory: current outcome/reason,
+revisions, last success/failure, next due (unknown when absent), retry count and
+budget, pending-delivery count and snapshot age. Running past deadline,
+last-success SLA violations and `timeout_uncertain` raise attention; unknown
+is warning attention. The checks panel shows these job fields alongside probes.
+An offline collector retains last-known data and remains offline; it does not
+turn each job into a new business failure.
+
+`job` is an alertable kind by default. Job attention uses a stable opaque job ID, with reason and revisions retained
+as transition metadata. A changed reason/revision raises a new attention
+transition after the grace window while repeated unchanged samples stay silent;
+an unhealthy reason change never reports a false recovery. Jobs already unhealthy
+on first activation alert after the existing grace window, including uncertain
+cleanup; they do not become a silent baseline. Existing bounded asynchronous
+relay delivery, quiet hours, state persistence and recovery semantics apply.
+Infrastructure owners must release and pin this application contract before
+activating job configuration. Browser and native scheduler acceptance remain
+separate from deterministic source fixtures.

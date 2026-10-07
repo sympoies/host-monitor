@@ -14,3 +14,5 @@ The app currently runs as a native user service with an immutable installed arti
 
 Read-only ASUSWRT-Merlin router probes use a dedicated restricted SSH identity;
 see [the protocol and deployment contract](DEVELOPMENT.md#read-only-merlin-router-probe).
+
+Scheduled jobs can report bounded local outcome snapshots independently of service running state, including deadline, last-success SLA, freshness, revision drift and cleanup uncertainty. See [scheduled-job metadata](DEVELOPMENT.md#scheduled-job-metadata) for the collector contract.
