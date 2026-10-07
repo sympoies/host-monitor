@@ -40,6 +40,8 @@ export function classifyJob(value:unknown,job:JobExpectation,host:string,now=Dat
  if(value===null||value===undefined)return missing(job);
  const row=object(value);
  if(!row||!completeRecord(row)||row.schema_version!=='host-jobs.status.v1'||row.job_id!==job.id||row.host!==host||!revision(row.registry_revision)||!revision(row.source_revision)||!digest(row.runtime_revision)||!digest(row.entrypoint_revision)||typeof row.outcome!=='string'||!outcomes.has(row.outcome)||typeof row.reason_code!=='string'||!reasons.has(row.reason_code)||!timestamp(row.started_at_utc)||!timestamp(row.updated_at_utc)||![row.finished_at_utc,row.last_success_utc,row.next_due_utc].every(v=>v===null||timestamp(v))||![row.duration_seconds,row.deadline_seconds,row.retry_count,row.retry_budget,row.pending_delivery_count].every(v=>bounded(v)))return missing(job,'snapshot_invalid');
+ const healthyOutcomes=['running','success','skipped_no_change','skipped_window','skipped_overlap'];
+ if(!healthyOutcomes.includes(row.outcome)&&healthyOutcomes.includes(row.reason_code))return missing(job,'snapshot_invalid');
  const age=(now-Date.parse(row.updated_at_utc))/1000,started=(now-Date.parse(row.started_at_utc))/1000;
  let reason:string|undefined;
  if(row.outcome==='timeout_uncertain')reason='timeout_uncertain';

@@ -24,7 +24,7 @@ test('snapshot projection excludes arbitrary output, args, paths, and reasons',(
  assert.doesNotMatch(JSON.stringify(projected),/PRIVATE_CANARY/);
 });
 test('collector reads only configured bounded regular files and never runs a job',async()=>{
- const dir=await fs.mkdtemp(path.join(os.tmpdir(),'scheduled-status-'));
+ const dir=await fs.mkdtemp(path.join(os.homedir(),'.scheduled-status-'));
  try{
   const file=path.join(dir,'job-a.json');await fs.writeFile(file,JSON.stringify(snapshot()));
   const before=(await fs.stat(file)).mtimeMs;
@@ -84,11 +84,14 @@ test('filesystem helper timeout kills and reaps a pending reader',async()=>{
  const {readJobInventory}=await import('../src/jobs.ts');
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'scheduled-reader-'));
  try{
-  const script=path.join(dir,'pending.mjs'),pidFile=path.join(dir,'pid');
-  await fs.writeFile(script,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);`);
-  const result=await readJobInventory({statusDir:dir,entries:[job]},'collector-a',at,200,new URL('file://'+script));
-  assert.equal(result.items[0].reasonCode,'snapshot_unreadable');
-  const pid=Number(await fs.readFile(pidFile,'utf8'));assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+  const pidFile=path.join(dir,'pid'),previous=process.env.JOB_READER_PID_FILE;
+  process.env.JOB_READER_PID_FILE=pidFile;
+  try{
+   const result=await readJobInventory({statusDir:dir,entries:[job]},'collector-a',at,300,new URL('./fixtures/job-reader-pending.mjs',import.meta.url));
+   assert.equal(result.items[0].reasonCode,'snapshot_unreadable');
+   const pid=Number(await fs.readFile(pidFile,'utf8'));assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+  }finally{if(previous===undefined)delete process.env.JOB_READER_PID_FILE;else process.env.JOB_READER_PID_FILE=previous;}
+
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
 
@@ -103,10 +106,47 @@ test('a retained helper pipe cannot hold the collector event loop after the reap
  const {execFile}=await import('node:child_process');const {promisify}=await import('node:util');const exec=promisify(execFile);
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'scheduled-pipe-'));let descendant=0;
  try{
-  const helper=path.join(dir,'helper.mjs'),pidFile=path.join(dir,'descendant'),collector=path.join(dir,'collector.mjs');
-  await fs.writeFile(helper,`import {spawn} from 'node:child_process';import fs from 'node:fs';const p=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',process.stdout,'ignore']});fs.writeFileSync(${JSON.stringify(pidFile)},String(p.pid));setInterval(()=>{},1000);`);
-  await fs.writeFile(collector,`import {readJobInventory} from ${JSON.stringify(new URL('../src/jobs.ts',import.meta.url).href)};await readJobInventory(${JSON.stringify({statusDir:dir,entries:[job]})},'collector-a',${at},300,new URL(${JSON.stringify(new URL('file://'+helper).href)}));`);
-  await exec(process.execPath,[collector],{timeout:1500});
-  descendant=Number(await fs.readFile(pidFile,'utf8'));
+  const pidFile=path.join(dir,'descendant'),inputFile=path.join(dir,'input.json');
+  await fs.writeFile(inputFile,JSON.stringify({config:{statusDir:dir,entries:[job]},host:'collector-a',now:at,timeoutMs:300,helper:new URL('./fixtures/job-reader-retained-pipe.mjs',import.meta.url).href}));
+  try{
+   await exec(process.execPath,[new URL('./fixtures/job-reader-collector.mjs',import.meta.url).pathname,inputFile],{timeout:1500,env:{...process.env,JOB_READER_PID_FILE:pidFile}});
+  }finally{descendant=Number(await fs.readFile(pidFile,'utf8').catch(()=> '0'));}
  }finally{if(descendant)try{process.kill(descendant,'SIGKILL');}catch{}await fs.rm(dir,{recursive:true,force:true});}
+});
+
+test('contradictory failure reasons invalidate only the affected job',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.homedir(),'.scheduled-isolation-'));
+ const other={...job,id:'job-b',label:'job-b'};
+ try{
+  await fs.writeFile(path.join(dir,'job-b.json'),JSON.stringify(snapshot({job_id:'job-b'})));
+  for(const [outcome,reason_code] of [['delivery_pending','success'],['timeout','success'],['auth_required','running']]){
+   await fs.writeFile(path.join(dir,'job-a.json'),JSON.stringify(snapshot({outcome,reason_code})));
+   const result=await collectJobs({statusDir:dir,entries:[job,other]},'collector-a',{now:at});
+   assert.equal(result?.items[0].reasonCode,'snapshot_invalid');assert.equal(result?.items[1].status,'healthy');
+  }
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+
+test('collect wires scheduled launchd jobs and keeps failed native reads unknown; API recomputes attention',async()=>{
+ const {collect}=await import('../src/collector.ts');const {projectSnapshot}=await import('../src/schema.ts');
+ const dir=await fs.mkdtemp(path.join(os.homedir(),'.scheduled-collect-'));
+ const expected={...job,label:'com.example.sync'};let failDetail=false,failInventory=false;
+ const fixture=async(name:string)=>fs.readFile(new URL('./fixtures/darwin/'+name,import.meta.url),'utf8');
+ const run=async(bin:string,args:string[])=>{
+  if(bin!=='launchctl')throw Error('unavailable');
+  if(args[1]==='system')return fixture('launchctl-print-system.txt');
+  if(args[1]==='gui/501'||args[1]==='user/501'){if(failInventory)throw Error('unavailable');return fixture('launchctl-print-gui.txt');}
+  if(args[1].endsWith('/com.example.sync')){if(failDetail)throw Error('unavailable');return fixture('launchctl-print-sync.txt');}
+  throw Error('unexpected native command');
+ };
+ try{
+  const current=Date.now();await fs.writeFile(path.join(dir,'job-a.json'),JSON.stringify(snapshot({started_at_utc:new Date(current-10000).toISOString(),finished_at_utc:new Date(current-1000).toISOString(),updated_at_utc:new Date(current).toISOString(),last_success_utc:new Date(current-1000).toISOString(),next_due_utc:new Date(current+50000).toISOString()})));
+  const config={name:'collector-a',jobs:{statusDir:dir,entries:[expected]}};
+  const options={platform:'darwin' as const,hostname:'collector-a',uid:501,run,stream:async()=>{}};
+  const healthy=await collect(config,options);assert.equal(healthy.jobs?.items[0].status,'healthy');assert.equal(healthy.attention.some(item=>item.kind==='job'),false);
+  failDetail=true;const detail=await collect(config,options);assert.equal(detail.jobs?.items[0].reasonCode,'native_unknown');assert.equal(detail.attention.filter(item=>item.kind==='job').length,1);
+  failDetail=false;failInventory=true;const inventory=await collect(config,options);assert.equal(inventory.jobs?.items[0].reasonCode,'native_unknown');
+  const projected=projectSnapshot({...detail,attention:[]});assert.equal(projected.attention.filter(item=>item.kind==='job').length,1,'caller cannot suppress job attention');
+  const repaired=projectSnapshot({...healthy,attention:detail.attention});assert.equal(repaired.attention.some(item=>item.kind==='job'),false,'caller cannot forge stale job attention');
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
