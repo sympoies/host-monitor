@@ -12,7 +12,7 @@ const snapshot=(extra:Record<string,unknown>={})=>({schema_version:'host-jobs.st
 test('scheduled status differentiates idle success, unknown, SLA, freshness, deadline and uncertainty',()=>{
  assert.equal(classifyJob(snapshot(),job,'collector-a',at).status,'healthy');
  assert.equal(classifyJob(null,job,'collector-a',at).status,'unknown');
- for(const [extra,reason] of [[{updated_at_utc:timestamp(-181)},'snapshot_stale'],[{last_success_utc:timestamp(-121)},'last_success_sla'],[{outcome:'running',started_at_utc:timestamp(-46)},'running_past_deadline'],[{outcome:'timeout_uncertain',reason_code:'process_group_unreaped'},'timeout_uncertain'],[{runtime_revision:'sha256:'+'0'.repeat(64)},'revision_drift'],[{host:'other'},'snapshot_invalid'],[{last_success_utc:null},'last_success_unknown']] as const){
+ for(const [extra,reason] of [[{updated_at_utc:timestamp(-181)},'snapshot_stale'],[{last_success_utc:timestamp(-121)},'last_success_sla'],[{outcome:'running',reason_code:'running',started_at_utc:timestamp(-46)},'running_past_deadline'],[{outcome:'timeout_uncertain',reason_code:'process_group_unreaped'},'timeout_uncertain'],[{runtime_revision:'sha256:'+'0'.repeat(64)},'revision_drift'],[{host:'other'},'snapshot_invalid'],[{last_success_utc:null},'last_success_unknown']] as const){
   const result=classifyJob(snapshot(extra),job,'collector-a',at);assert.notEqual(result.status,'healthy');assert.equal(result.reasonCode,reason);
  }
  const skipped=classifyJob(snapshot({outcome:'skipped_window',reason_code:'skipped_window'}),job,'collector-a',at);assert.equal(skipped.status,'healthy');
@@ -119,7 +119,7 @@ test('contradictory failure reasons invalidate only the affected job',async()=>{
  const other={...job,id:'job-b',label:'job-b'};
  try{
   await fs.writeFile(path.join(dir,'job-b.json'),JSON.stringify(snapshot({job_id:'job-b'})));
-  for(const [outcome,reason_code] of [['delivery_pending','success'],['timeout','success'],['auth_required','running']]){
+  for(const [outcome,reason_code] of [['delivery_pending','success'],['timeout','success'],['auth_required','running'],['success','auth_required'],['skipped_window','permission_required'],['running','auth_required']]){
    await fs.writeFile(path.join(dir,'job-a.json'),JSON.stringify(snapshot({outcome,reason_code})));
    const result=await collectJobs({statusDir:dir,entries:[job,other]},'collector-a',{now:at});
    assert.equal(result?.items[0].reasonCode,'snapshot_invalid');assert.equal(result?.items[1].status,'healthy');
