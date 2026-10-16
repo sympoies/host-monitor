@@ -4,7 +4,17 @@ A central, read-only web dashboard for installed system/user services on Linux (
 
 Each host owns its collector configuration through its infrastructure repository. The portable collector emits a versioned JSON snapshot over an existing SSH connection; the server schedules collection and serves the UI on loopback. Tailnet exposure belongs to infrastructure. There are no third-party runtime dependencies, browser shell actions, journal messages in snapshots, environment dumps, or provider transcripts. Anyone allowed to open the monitor through the Tailnet can also open configured journal tails; infrastructure must scope that access accordingly.
 
-The dashboard retains accurate offline/stale state, shows installed inactive services, treats successful dormant oneshots as idle, and flags failed units, stopped required services, missing required containers, failed probes, and disk/memory pressure. Running containers without a health check are labeled unverified instead of healthy. Each host is collected on its own schedule and timeout. Attention transitions are kept in a bounded on-disk log and can be sent, once per transition, to the fleet notification relay. An item must last a short grace window (90 s by default) before it alerts, so a self-healing restart stays quiet, while a sustained failure or a restart loop still alerts. Journal counts are grouped by unit and priority, and macOS log counts by required launchd job; their private message contents never leave the collector.
+The dashboard retains accurate offline/stale state, shows installed inactive services, treats successful dormant oneshots as idle, and flags failed units, stopped required services, missing required containers, failed probes, and disk/memory pressure. Running containers without a health check are labeled unverified instead of healthy.
+
+Each host is collected on its own schedule and timeout. Attention transitions are kept in a bounded on-disk log and can be sent, once per transition, to the fleet notification relay. An item must last a short grace window (90 s by default) before it alerts, so a self-healing restart stays quiet, while a sustained failure or a restart loop still alerts. Journal counts are grouped by unit and priority, and macOS log counts by required launchd job; their private message contents never leave the collector.
+
+## Documentation
+
+| Read | For |
+| --- | --- |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Host and server configuration, collector and API contracts, alerts, acceptance, and the [release contract](DEVELOPMENT.md#releases) |
+| [AGENTS.md](AGENTS.md) | Ownership boundaries and rules for agents editing this repository |
+| [docs/devlog/README.md](docs/devlog/README.md) | Development history and release entries (there is no `CHANGELOG.md`) |
 
 ## Run and validate
 
