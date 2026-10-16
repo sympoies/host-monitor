@@ -18,11 +18,35 @@ Test hardware parsing, service classification, incomplete collection, offline/st
 
 Run browser acceptance against a running server with `node scripts/accept-browser.ts --config <server-config.json> <url> <private-evidence-dir>`. It expects exactly the hosts in the server configuration, drives installed Chrome headed, and writes screenshots and `browser-receipt.json` to the evidence directory. Per host it expects the resources that `scripts/accept-expectations.ts` derives from the snapshot: four metrics and disk rows when the host collects its own resources, and Beszel-backed resource slots when it reports `resources: external`. GPU slots appear only when the fresh hub record includes GPUs; unavailable metrics show an explicit reason. Playwright is not a project dependency: it resolves from this checkout unless `HOST_MONITOR_PLAYWRIGHT_ROOT` names a directory whose `node_modules` contains it.
 
+### Host configuration and collectors
+
 A host configuration has `name` (the server host name, without dots), optional `identity`, `required` (`system` and `user` lists), `probes`, `docker`, `requiredContainers`, and `nvidia`. The collector refuses to run unless the machine hostname matches `identity`, or `name` when `identity` is absent; both sides are compared case-insensitively after removing a `.local` suffix, so a Mac that reports `MacBook.local` uses `"identity": "MacBook"`.
 
-The collector selects a platform adapter. On Linux it reads `/proc`, GNU `df`, `systemctl`, `journalctl`, and optionally `docker` and `nvidia-smi`. On macOS (`darwin`) it reads launchd without privileges: `required.user` lists LaunchAgent labels in the `gui/<uid>` domain (`user/<uid>` when there is no login session) and `required.system` lists LaunchDaemon labels in the `system` domain. Every loaded job is inventoried from `launchctl print <domain>`; each required label is also read with `launchctl print <domain>/<label>`, keeping only its type, state, pid, run count, last exit code or signal, run interval, and program name. A running job is healthy. A required job that is missing, exited non-zero, or was killed by a signal is an error; a required periodic job that last exited 0 is idle, and any other stopped required job is an error. Jobs that are not required never need attention, because launchd routinely stops idle agents. Error counts come from `/usr/bin/log show --last 1h --style ndjson` filtered to the program names of the required jobs (and to the collecting user for agents), streamed with a timeout and a line cap; only counts and the last timestamp are kept. macOS snapshots set `resources` to `external` and collect no CPU, memory, disk, or GPU data; the server reads their metrics from the configured Beszel hub; the dashboard shows the source, record age, and explicit no-data states. Snapshots stay `schemaVersion` 1: `platform`, `resources`, service `manager`, journal `process`, and the systemd service `restarts` counter are optional additions.
+The collector selects a platform adapter. On Linux it reads `/proc`, GNU `df`, `systemctl`, `journalctl`, and optionally `docker` and `nvidia-smi`.
 
-Android devices (fleet-infra decision 0003) run no collector. The server collects a device attached to its own USB with one `adb -s <serial> shell` call per refresh; the script (`ADB_SCRIPT` in `src/android.ts`) is read-only and runs `dumpsys battery`, `settings get global protect_battery` (Samsung battery protection; `null` on other devices), `dumpsys thermalservice`, `/proc/meminfo`, `df -k /data`, `/proc/uptime`, `/proc/loadavg`, `nproc`, `uname -r`, a `ps` filtered to the Termux `sshd` and the Tailscale app, and two `getprop` values. The output must end with its completion marker or the attempt fails as a whole; a section that cannot be parsed becomes a collection issue. The snapshot has `platform: android`, battery level, health, temperature, status and power source, protection, thermal status and HAL sensors, memory, a `/data` disk row, and two services: the required `sshd` (it must run as the Termux app's user) and the optional `tailscale` app. Android attention replaces the Linux memory and disk thresholds: battery temperature at or above 45 °C (error), battery health other than good (error; warning when unknown), `/data` at or above 90% (warning; error at 95%), battery protection off while on external power (warning), and `sshd` not running (a required service error). A device that is detached, offline, or unauthorized marks only its host offline and, by default, never raises an offline alert, because an unplugged phone is an expected state. A device may instead be attached to another collector host: give its entry an `ssh` alias and an absolute `adb.bin` (a non-interactive remote shell has a minimal `PATH`), and the server runs the same script through one `ssh <alias> <bin> -s <serial> shell '<script>'` call, with the script passed as one single-quoted word. The alias and serial are allowlisted. A host entry's own `offlineAfterSeconds` turns offline alerts on for an adb device whose collection stays down that long (see the alerts table), so a broken collection path is told apart from a phone that is merely unplugged for a while.
+On macOS (`darwin`) it reads launchd without privileges: `required.user` lists LaunchAgent labels in the `gui/<uid>` domain (`user/<uid>` when there is no login session) and `required.system` lists LaunchDaemon labels in the `system` domain. Every loaded job is inventoried from `launchctl print <domain>`; each required label is also read with `launchctl print <domain>/<label>`, keeping only its type, state, pid, run count, last exit code or signal, run interval, and program name.
+
+A running job is healthy. A required job that is missing, exited non-zero, or was killed by a signal is an error; a required periodic job that last exited 0 is idle, and any other stopped required job is an error. Jobs that are not required never need attention, because launchd routinely stops idle agents.
+
+Error counts come from `/usr/bin/log show --last 1h --style ndjson` filtered to the program names of the required jobs (and to the collecting user for agents), streamed with a timeout and a line cap; only counts and the last timestamp are kept.
+
+macOS snapshots set `resources` to `external` and collect no CPU, memory, disk, or GPU data; the server reads their metrics from the configured Beszel hub; the dashboard shows the source, record age, and explicit no-data states. Snapshots stay `schemaVersion` 1: `platform`, `resources`, service `manager`, journal `process`, and the systemd service `restarts` counter are optional additions.
+
+### Android devices
+
+Android devices (fleet-infra decision 0003) run no collector. The server collects a device attached to its own USB with one `adb -s <serial> shell` call per refresh; the script (`ADB_SCRIPT` in `src/android.ts`) is read-only and runs `dumpsys battery`, `settings get global protect_battery` (Samsung battery protection; `null` on other devices), `dumpsys thermalservice`, `/proc/meminfo`, `df -k /data`, `/proc/uptime`, `/proc/loadavg`, `nproc`, `uname -r`, a `ps` filtered to the Termux `sshd` and the Tailscale app, and two `getprop` values.
+
+The output must end with its completion marker or the attempt fails as a whole; a section that cannot be parsed becomes a collection issue.
+
+The snapshot has `platform: android`, battery level, health, temperature, status and power source, protection, thermal status and HAL sensors, memory, a `/data` disk row, and two services: the required `sshd` (it must run as the Termux app's user) and the optional `tailscale` app.
+
+Android attention replaces the Linux memory and disk thresholds: battery temperature at or above 45 °C (error), battery health other than good (error; warning when unknown), `/data` at or above 90% (warning; error at 95%), battery protection off while on external power (warning), and `sshd` not running (a required service error).
+
+A device that is detached, offline, or unauthorized marks only its host offline and, by default, never raises an offline alert, because an unplugged phone is an expected state.
+
+A device may instead be attached to another collector host: give its entry an `ssh` alias and an absolute `adb.bin` (a non-interactive remote shell has a minimal `PATH`), and the server runs the same script through one `ssh <alias> <bin> -s <serial> shell '<script>'` call, with the script passed as one single-quoted word. The alias and serial are allowlisted. A host entry's own `offlineAfterSeconds` turns offline alerts on for an adb device whose collection stays down that long (see the alerts table), so a broken collection path is told apart from a phone that is merely unplugged for a while.
+
+### Server configuration
 
 The server configuration lists `hosts` (`name`, and either local `node`/`collector`/`config` paths, an `ssh` alias with remote paths, or `adb`: `{"serial": "<adb serial>"}` with an optional absolute `bin` for the adb binary, which defaults to `adb` on `PATH`; with an `ssh` alias, `bin` is required), an optional `port` and `refreshSeconds`, and optional `importantServices`: service-name substrings that the dashboard's default "important services" filter shows in addition to required, failed, and container entries. Set it server-wide or per host; a host entry's list replaces the server-wide one.
 
@@ -84,17 +108,22 @@ A host whose snapshot has `resources: external` delegates generic resource metri
 
 After each successful collection of an external host the server authenticates with `POST /api/collections/users/auth-with-password`, looks up the system in `systems`, and reads the newest `1m` record of `system_stats`. CPU utilization is `stats.cpu`; `m`/`mu` give total and used memory in GiB, with available memory derived as total minus used under the hub's configured memory calculation. Optional `g[id].n`/`u` give GPU name and utilization. Missing or invalid fields remain unknown. Disk sizes are GiB: `d`/`du` give the root disk, and each `stats.efs` entry (Beszel's `EXTRA_FILESYSTEMS`, keyed by display name) gives one extra filesystem. The session token and the system id stay in memory; a rejected token is replaced once. Each request has a five-second timeout, and the hub is never contacted for hosts that collect their own resources.
 
-`host.beszel` is `{status, lastSuccess, recordedAt, disks, cpuBusy?, memory?, gpus?}`.
-Memory fields (`total`, `used`, `available`) and disk sizes are bytes; GPU entries
-contain only `name` and `busy` (%). Status is `ok`, `stale` when the newest record
-is over ten minutes old when the fleet is served (it ages between hub reads), or
-`unavailable` when the hub cannot be read, the system is unknown, credentials are
-missing, or no usable record exists. A failed read retains the previous metrics
-and times in the API with an unavailable status. Cards, pinned metrics, and disk
-rows display values only from an `ok` reading. Otherwise they show no data and a
-reason (unconfigured, stale, unreadable, or missing metric); retained values are
-never presented as current. Fresh detail metrics show the Beszel record time and
-age. Agentless external hosts use the same hub metrics without a second collector.
+`host.beszel` is `{status, lastSuccess, recordedAt, disks, cpuBusy?, memory?,
+gpus?}`. Memory fields (`total`, `used`, `available`) and disk sizes are bytes;
+GPU entries contain only `name` and `busy` (%).
+
+Status is `ok`, `stale` when the newest record is over ten minutes old when the
+fleet is served (it ages between hub reads), or `unavailable` when the hub
+cannot be read, the system is unknown, credentials are missing, or no usable
+record exists. A failed read retains the previous metrics and times in the API
+with an unavailable status.
+
+Cards, pinned metrics, and disk rows display values only from an `ok` reading.
+Otherwise they show no data and a reason (unconfigured, stale, unreadable, or
+missing metric); retained values are never presented as current. Fresh detail
+metrics show the Beszel record time and age. Agentless external hosts use the
+same hub metrics without a second collector.
+
 Hub trouble never changes the host's own `status` or creates attention items:
 Beszel owns resource threshold alerts. Disk rows use the same layout as
 self-collected hosts, with `/` for the root and each extra filesystem's display
@@ -126,11 +155,19 @@ The server records attention transitions: a new attention item, a recovered item
 
 A new item is recorded and alerted only once it has stayed in attention for its grace window: `alerts.graceSeconds`, default 90, overridable per item with `alerts.graceOverrides`. An item that clears within the window leaves no event, and only an item that was recorded produces a recovery. 90 s covers the self-healing restarts seen in the fleet: a binary replacement that exits 75 and is restarted 5 s later, and a speech model that takes about 10 s to load before its probe answers again. A real outage still alerts on the first collection at least 90 s after it was first seen, so a host refreshed every 60 s alerts on its third failed collection, and one refreshed every 300 s on its second. The window is measured in time, not in collections, so it means the same on every host. `graceSeconds: 0` restores alerting on first sight. Without an `alerts` object, history uses the defaults.
 
-A host entry that is reached over `ssh` may set `bestEffort: true` (a laptop that is often away). When a full collection of such a host fails, the server runs one cheap reachability probe: `ssh` with the same options and a five-second connect timeout, running only `true`. A reachable host is retried on its normal interval. An unreachable host is only probed, never collected, on a backoff schedule: `backoffSeconds` (server-wide or per host; 1 to 8 values of 1 to 86400 seconds; default `[60,120,300,900]`, so 1, 2, 5, then every 15 minutes). The first successful probe clears the backoff and runs a full collection at once. `/api/fleet` shows such a host as offline with `reachability: {lastSeen, nextCheck, checks}`, and the dashboard prints the last-seen and next-check times. A best-effort host never raises offline attention or an offline alert; required hosts keep the per-interval collection and `alerts.offlineAfterSeconds`. The backoff lives in memory, so a server restart begins with a full collection.
+A host entry that is reached over `ssh` may set `bestEffort: true` (a laptop that is often away). When a full collection of such a host fails, the server runs one cheap reachability probe: `ssh` with the same options and a five-second connect timeout, running only `true`. A reachable host is retried on its normal interval.
+
+An unreachable host is only probed, never collected, on a backoff schedule: `backoffSeconds` (server-wide or per host; 1 to 8 values of 1 to 86400 seconds; default `[60,120,300,900]`, so 1, 2, 5, then every 15 minutes). The first successful probe clears the backoff and runs a full collection at once.
+
+`/api/fleet` shows such a host as offline with `reachability: {lastSeen, nextCheck, checks}`, and the dashboard prints the last-seen and next-check times. A best-effort host never raises offline attention or an offline alert; required hosts keep the per-interval collection and `alerts.offlineAfterSeconds`. The backoff lives in memory, so a server restart begins with a full collection.
 
 A host entry may set `agentless: true` (an `ssh` alias only; no `node`, `collector`, `config`, `adb`, or `logUnits`) for a macOS host where nothing may be installed. The server runs one fixed read-only command over ssh (`AGENTLESS_SCRIPT` in `src/agentless.ts`: `sysctl` for boot time, CPU count and model, and `uname -r`) and builds a `darwin` snapshot with `resources: external`, `agentless: true`, uptime, and no services. Output without its end marker or with implausible values fails the collection as a whole. The dashboard marks the host as ssh-only instead of showing an empty inventory as a failure. It combines with `bestEffort`.
 
-Restart loops alert even when every single restart is quick. The collector reports each systemd service's `NRestarts` counter as `restarts`, and the server counts its increases, so restarts between two collections are not missed. A counter that goes down was reset by a manual restart. The first value seen for a service is a baseline, and so is the first value after a gap between successful collections longer than the window, because the time of those restarts is unknown. Items without a counter (probes, containers, launchd jobs, and services from older collectors) count each time they newly enter attention. When an item reaches `alerts.restartLoop.restarts` (default 3) within `windowSeconds` (default 600), it alerts at once as `restart loop · N restarts in 10 min` (services with a counter) or `flapping · N failures in 10 min` (other items). It recovers once it is healthy and a full window has passed without a restart, so a steady loop stays one incident instead of alerting and recovering on every restart. A sustained alert of an item that is looping waits the same way.
+Restart loops alert even when every single restart is quick. The collector reports each systemd service's `NRestarts` counter as `restarts`, and the server counts its increases, so restarts between two collections are not missed. A counter that goes down was reset by a manual restart. The first value seen for a service is a baseline, and so is the first value after a gap between successful collections longer than the window, because the time of those restarts is unknown.
+
+Items without a counter (probes, containers, launchd jobs, and services from older collectors) count each time they newly enter attention.
+
+When an item reaches `alerts.restartLoop.restarts` (default 3) within `windowSeconds` (default 600), it alerts at once as `restart loop · N restarts in 10 min` (services with a counter) or `flapping · N failures in 10 min` (other items). It recovers once it is healthy and a full window has passed without a restart, so a steady loop stays one incident instead of alerting and recovering on every restart. A sustained alert of an item that is looping waits the same way.
 
 The first observation of a host without saved state is a silent baseline: its current items alert only after they clear and come back, and they recover silently. The grace window and restart counters live in memory, so a server restart starts them over. State saved by 0.4.x lists baseline items as notified, so each of them sends one recovery after the upgrade.
 
@@ -249,14 +286,17 @@ unavailable readings produce unknown attention rather than healthy values.
 `probe` attention follows the existing transition/quiet-hours/relay path.
 Firmware compares numeric version components and requires the router update
 flag; newer releases produce severity `notice`, delivered as `info`. Notices are
-excluded from the silent initial baseline, still respect grace/quiet hours,
-and include the available version in their identity so a later release
-creates a new notice. AdGuard process/listener/DNS errors also notify after grace
-on first activation; other initial attention retains baseline semantics. The router
-checker is the advertised-version source, not proof an upgrade is safe. Operators
-cross-check the official model-specific Merlin release directory and changelog,
-then schedule updates with the maintainer. Flashing is never automated. A router
-without Beszel needs its own `offlineAfterSeconds` in server configuration.
+excluded from the silent initial baseline, still respect grace/quiet hours, and
+include the available version in their identity so a later release creates a new
+notice. AdGuard process/listener/DNS errors also notify after grace on first
+activation; other initial attention retains baseline semantics.
+
+The router checker is the advertised-version source, not proof an upgrade is
+safe. Operators cross-check the official model-specific Merlin release directory
+and changelog, then schedule updates with the maintainer. Flashing is never
+automated. A router without Beszel needs its own `offlineAfterSeconds` in server
+configuration.
+
 Run `node --test test/router.test.ts` for protocol, configuration and notice
 regressions; installed-data UI acceptance remains with the deployment owner.
 
