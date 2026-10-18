@@ -199,6 +199,15 @@ git tag -s v<version> -m v<version> <merged-main-commit>
 git push origin v<version>
 ```
 
+The repository-owned dispatcher `.agents/scripts/release.sh` (invoked through `agent-run`) automates this flow and keeps tag creation explicit:
+
+```sh
+.agents/scripts/release.sh --dry-run [<merged-main-commit>]
+.agents/scripts/release.sh --execute [<merged-main-commit>]
+```
+
+It requires exactly one mode. Both modes check that the commit is merged into `origin/main`, that `package.json` `version` is `MAJOR.MINOR.PATCH`, that the devlog has a release entry for it, that the tag exists neither locally nor on the remote, and that `scripts/package-release.sh` builds the assets from the commit with a consistent artifact id. `--dry-run` builds only in a temporary directory, prints the planned version, tag, commit, artifact id, and steps, and creates no tag, pushes nothing, and publishes nothing. `--execute` also requires a clean checkout of the release commit, runs `npm ci` and `npm run validate`, creates and verifies the signed tag, pushes it, waits for the `release` workflow, checks that the published `artifact-id` asset equals the locally built artifact id, and prints the release URL. It never runs without an explicit mode.
+
 The `release` workflow runs `npm ci` and `npm run validate`, refuses a tag that differs from `v<package.json version>`, and publishes a GitHub release with these assets, produced by `scripts/package-release.sh OUTPUT TAG`:
 
 - `host-monitor-<version>-<artifact-id>.tar.gz`: the artifact under one top-level directory of the same name.
