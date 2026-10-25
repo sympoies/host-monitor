@@ -38,19 +38,16 @@ export async function collectSystemd(scope:string,required:string[]=[],run:Run=c
   return {...unit,health:classifyUnit(unit,required)};
  });
 }
-// Required mount units are inventoried separately: they can be generated at runtime and
-// are not part of the service unit listing. Every selected unit is passed as one argv item.
+// Required mount units are queried separately because generated units are not services.
+// Every configured unit is validated and passed as one argv item.
 export async function collectSystemdMounts(scope:string,required:string[]=[],run:Run=command):Promise<Service[]> {
  const prefix=scope==='user'?['--user']:[];
- const files=JSON.parse(await run('systemctl',[...prefix,'list-unit-files','--type=mount','--no-pager','--output=json'])) as UnitFileRow[];
- const loaded=JSON.parse(await run('systemctl',[...prefix,'list-units','--all','--type=mount','--no-pager','--output=json'])) as UnitRow[];
- const names=[...new Set([...files.map(r=>r.unit_file),...loaded.map(r=>r.unit),...required])].filter(name=>unitName(name,'mount'));
- const queryNames=names;
- const props=queryNames.length?parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Names,Description,ActiveState,SubState,Result,UnitFileState','--',...queryNames])):[];
- const byId=new Map<string,Record<string,string>>();for(const p of props)for(const name of [p.Id,...(p.Names||'').split(/\s+/)])if(name)byId.set(name,p);
- const byLoaded=new Map(loaded.map(p=>[p.unit,p]));
- return names.map(name=>{const p:Record<string,string|undefined>=byId.get(name)??{},r:Partial<UnitRow>=byLoaded.get(name)??{},f=files.find(row=>row.unit_file===name);
-  const unit={name,scope,description:p.Description||r.description||name,installed:f?.state||p.UnitFileState||'generated',active:p.ActiveState||r.active||'unknown',sub:p.SubState||r.sub||'',type:'mount',result:p.Result||'',exitCode:null,memoryBytes:null,lastExit:null,lastStarted:null,triggers:'',required:required.includes(name)};
+ const names=[...new Set(required)].filter(name=>unitName(name,'mount'));
+ if(!names.length)return [];
+ const props=parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Description,LoadState,ActiveState,SubState,Result,UnitFileState','--',...names]));
+ const byId=new Map(props.filter(p=>p.Id).map(p=>[p.Id,p]));
+ return names.map(name=>{const p:Record<string,string|undefined>=byId.get(name)??{};
+  const unit={name,scope,description:p.Description||name,installed:p.LoadState==='not-found'?'missing':p.UnitFileState||'generated',active:p.ActiveState||'unknown',sub:p.SubState||'',type:'mount',result:p.Result||'',exitCode:null,memoryBytes:null,lastExit:null,lastStarted:null,triggers:'',required:true};
   const health=classifyUnit({...unit,active:unit.active==='refreshing'?'active':unit.active},required);
   return {...unit,health};
  });
@@ -121,6 +118,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
  const probes=()=>(config.probes??[]).map(async probe=>{const u=loopbackProbeUrl(probe.url);try{const r=await fetch(u,{signal:AbortSignal.timeout(5000),redirect:'error'});result.probes.push({name:probe.name,ok:r.ok,status:r.status});await r.body?.cancel();}catch{result.probes.push({name:probe.name,ok:false,status:null});}});
  const sessions=collectSessions(config.agentSessions,run===command?undefined:async(bin,args)=>run(bin,args));
  const scopes:Scope[]=['system','user'];
+ const requiredSystemMounts=(config.required?.system??[]).filter(name=>unitName(name,'mount'));
  await Promise.all(darwin?[
   (async()=>{const byScope:Partial<Record<Scope,LogTarget[]>>={};await Promise.all((['user','system'] as Scope[]).map(scope=>part(scope+' services',()=>collectLaunchd(scope,config.required?.[scope]??[],{uid,run,scheduled:scope==='user'?(config.jobs?.entries??[]).map(job=>job.label):[]}),v=>{result.services.push(...v.services);byScope[scope]=v.logTargets;})));
    await part('error log',()=>launchdLogErrors([...byScope.user??[],...byScope.system??[]],{uid,stream}),v=>result.journalErrors.push(...v));})(),
@@ -135,7 +133,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
    part(scope+' failed units',()=>failed(scope),v=>result.failedUnits.push(...v)),
    part(scope+' journal',()=>journal(scope),v=>result.journalErrors.push(...v)),
   ]),
-  part('system mounts',()=>collectSystemdMounts('system',config.required?.system??[]),v=>result.services.push(...v)),
+  ...(requiredSystemMounts.length?[part('system mounts',()=>collectSystemdMounts('system',requiredSystemMounts,run),v=>result.services.push(...v))]:[]),
   ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
   ...(config.nvidia?[part('GPU',gpu,v=>result.gpus=v)]:[]),
   ...probes(),
