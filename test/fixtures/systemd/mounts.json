@@ -1,0 +1,7 @@
+{
+  "properties": [
+    {"Id": "srv-data\\x2darchive.mount", "Description": "Generated data mount", "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead", "Result": "success", "UnitFileState": "generated"},
+    {"Id": "srv-cache.mount", "Description": "Generated cache mount", "LoadState": "loaded", "ActiveState": "failed", "SubState": "failed", "Result": "exit-code", "UnitFileState": "generated"},
+    {"Id": "missing.mount", "Description": "missing.mount", "LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead", "Result": "success"}
+  ]
+}
