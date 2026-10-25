@@ -18,14 +18,17 @@ const exec=promisify(execFile);
 const delay=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 async function command(bin:string,args:string[]):Promise<string> {return (await exec(bin,args,{timeout:10000,maxBuffer:8*1024*1024,encoding:'utf8',env:{...process.env,LC_ALL:'C'}})).stdout;}
 const cpu=async()=> (await fs.readFile('/proc/stat','utf8')).split('\n')[0].trim().split(/\s+/).slice(1,9).map(Number);
-const unitName=(name:unknown):name is string=>typeof name==='string'&&/^[a-zA-Z0-9_.:@\\-]+\.service$/.test(name);
+const unitName=(name:unknown,suffix='service'):name is string=>{
+ if(typeof name!=='string'||!name.endsWith('.'+suffix))return false;
+ return /^[a-zA-Z0-9_.:@-]+$/.test(name.slice(0,-suffix.length-1).replace(/\\x[0-9a-fA-F]{2}/g,'X'));
+};
 interface UnitFileRow{unit_file:string;state?:string}
 interface UnitRow{unit:string;description?:string;active?:string;sub?:string}
 export async function collectSystemd(scope:string,required:string[]=[],run:Run=command):Promise<Service[]> {
  const prefix=scope==='user'?['--user']:[];
  const files=JSON.parse(await run('systemctl',[...prefix,'list-unit-files','--type=service','--no-pager','--output=json'])) as UnitFileRow[];
  const loaded=JSON.parse(await run('systemctl',[...prefix,'list-units','--all','--type=service','--no-pager','--output=json'])) as UnitRow[];
- const names=[...new Set([...files.map(r=>r.unit_file),...loaded.map(r=>r.unit),...required])].filter(unitName);
+ const names=[...new Set([...files.map(r=>r.unit_file),...loaded.map(r=>r.unit),...required])].filter(name=>unitName(name));
  const queryNames=names.filter(name=>!name.endsWith('@.service'));
  const props=queryNames.length?parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Names,Description,ActiveState,SubState,Type,Result,UnitFileState,ExecMainStatus,MemoryCurrent,ExecMainExitTimestamp,ActiveEnterTimestamp,Triggers,NRestarts','--',...queryNames])):[];
  const byId=new Map<string,Record<string,string>>();for(const p of props)for(const name of [p.Id,...(p.Names||'').split(/\s+/)])if(name)byId.set(name,p);
@@ -33,6 +36,23 @@ export async function collectSystemd(scope:string,required:string[]=[],run:Run=c
  return names.map(name=>{const p:Record<string,string|undefined>=byId.get(name)??(name.endsWith('@.service')?{ActiveState:'inactive',Type:'template'}:{}),r:Partial<UnitRow>=byLoaded.get(name)??{},f=files.find(r=>r.unit_file===name);
   const unit={name,scope,description:p.Description||r.description||name,installed:f?.state||p.UnitFileState||'generated',active:p.ActiveState||r.active||'unknown',sub:p.SubState||r.sub||'',type:p.Type||'',result:p.Result||'',exitCode:p.ExecMainStatus?Number(p.ExecMainStatus):null,memoryBytes:/^\d+$/.test(p.MemoryCurrent||'')?Number(p.MemoryCurrent):null,lastExit:p.ExecMainExitTimestamp||null,lastStarted:p.ActiveEnterTimestamp||null,triggers:p.Triggers||'',restarts:/^\d+$/.test(p.NRestarts||'')?Number(p.NRestarts):null,required:required.includes(name)};
   return {...unit,health:classifyUnit(unit,required)};
+ });
+}
+// Required mount units are inventoried separately: they can be generated at runtime and
+// are not part of the service unit listing. Every selected unit is passed as one argv item.
+export async function collectSystemdMounts(scope:string,required:string[]=[],run:Run=command):Promise<Service[]> {
+ const prefix=scope==='user'?['--user']:[];
+ const files=JSON.parse(await run('systemctl',[...prefix,'list-unit-files','--type=mount','--no-pager','--output=json'])) as UnitFileRow[];
+ const loaded=JSON.parse(await run('systemctl',[...prefix,'list-units','--all','--type=mount','--no-pager','--output=json'])) as UnitRow[];
+ const names=[...new Set([...files.map(r=>r.unit_file),...loaded.map(r=>r.unit),...required])].filter(name=>unitName(name,'mount'));
+ const queryNames=names;
+ const props=queryNames.length?parseProperties(await run('systemctl',[...prefix,'show','--no-pager','--property=Id,Names,Description,ActiveState,SubState,Result,UnitFileState','--',...queryNames])):[];
+ const byId=new Map<string,Record<string,string>>();for(const p of props)for(const name of [p.Id,...(p.Names||'').split(/\s+/)])if(name)byId.set(name,p);
+ const byLoaded=new Map(loaded.map(p=>[p.unit,p]));
+ return names.map(name=>{const p:Record<string,string|undefined>=byId.get(name)??{},r:Partial<UnitRow>=byLoaded.get(name)??{},f=files.find(row=>row.unit_file===name);
+  const unit={name,scope,description:p.Description||r.description||name,installed:f?.state||p.UnitFileState||'generated',active:p.ActiveState||r.active||'unknown',sub:p.SubState||r.sub||'',type:'mount',result:p.Result||'',exitCode:null,memoryBytes:null,lastExit:null,lastStarted:null,triggers:'',required:required.includes(name)};
+  const health=classifyUnit({...unit,active:unit.active==='refreshing'?'active':unit.active},required);
+  return {...unit,health};
  });
 }
 async function failed(scope:string):Promise<FailedUnit[]> {
@@ -115,6 +135,7 @@ export async function collect(config:HostConfig,{platform=process.platform,hostn
    part(scope+' failed units',()=>failed(scope),v=>result.failedUnits.push(...v)),
    part(scope+' journal',()=>journal(scope),v=>result.journalErrors.push(...v)),
   ]),
+  part('system mounts',()=>collectSystemdMounts('system',config.required?.system??[]),v=>result.services.push(...v)),
   ...(config.docker?[part('containers',containers,v=>result.containers=v)]:[]),
   ...(config.nvidia?[part('GPU',gpu,v=>result.gpus=v)]:[]),
   ...probes(),

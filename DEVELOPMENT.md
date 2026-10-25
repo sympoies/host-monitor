@@ -24,6 +24,8 @@ A host configuration has `name` (the server host name, without dots), optional `
 
 The collector selects a platform adapter. On Linux it reads `/proc`, GNU `df`, `systemctl`, `journalctl`, and optionally `docker` and `nvidia-smi`.
 
+Linux service inventory is separate from mount-unit inventory: systemd `.mount` units are collected from their unit-file and loaded-unit listings so generated units are included. Exact configured required mount names (including systemd-escaped names such as `srv-data\x2darchive.mount`) are queried as individual `systemctl` arguments. A required mount that is missing, inactive, or failed needs attention; an active mount is healthy. No mount command is browser-controlled, and mount collection does not read mount contents or journal messages.
+
 On macOS (`darwin`) it reads launchd without privileges: `required.user` lists LaunchAgent labels in the `gui/<uid>` domain (`user/<uid>` when there is no login session) and `required.system` lists LaunchDaemon labels in the `system` domain. Every loaded job is inventoried from `launchctl print <domain>`; each required label is also read with `launchctl print <domain>/<label>`, keeping only its type, state, pid, run count, last exit code or signal, run interval, and program name.
 
 A running job is healthy. A required job that is missing, exited non-zero, or was killed by a signal is an error; a required periodic job that last exited 0 is idle, and any other stopped required job is an error. Jobs that are not required never need attention, because launchd routinely stops idle agents.

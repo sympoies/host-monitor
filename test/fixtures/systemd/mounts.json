@@ -1,0 +1,14 @@
+{
+  "unitFiles": [
+    {"unit_file": "srv-data\\x2darchive.mount", "state": "generated"},
+    {"unit_file": "srv-cache.mount", "state": "generated"}
+  ],
+  "loaded": [
+    {"unit": "srv-data\\x2darchive.mount", "description": "Generated data mount", "active": "inactive", "sub": "dead"},
+    {"unit": "srv-cache.mount", "description": "Generated cache mount", "active": "failed", "sub": "failed"}
+  ],
+  "properties": [
+    {"Id": "srv-data\\x2darchive.mount", "Description": "Generated data mount", "ActiveState": "inactive", "SubState": "dead", "Result": "success"},
+    {"Id": "srv-cache.mount", "Description": "Generated cache mount", "ActiveState": "failed", "SubState": "failed", "Result": "exit-code"}
+  ]
+}
