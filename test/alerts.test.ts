@@ -18,6 +18,17 @@ test('transitions are emitted once per new attention item, recovery and offline 
  assert.deepEqual(t.online('collector-a',[],T0+920000).map(e=>e.type),['online']);
  assert.deepEqual(t.online('collector-a',[],T0+940000),[]);
 });
+test('an alerted item whose unit is only transitioning keeps its alert state',()=>{
+ const t=createTracker({offlineAfterMs:300000,graceMs:0});
+ const hold=[{kind:'service',title:'web.service'}];
+ t.online('collector-a',[],T0);
+ assert.deepEqual(t.online('collector-a',[stopped],T0+20000).map(e=>e.type),['attention']);
+ assert.deepEqual(t.online('collector-a',[],T0+40000,{},hold),[],'activating is not a recovery');
+ assert.deepEqual(t.online('collector-a',[],T0+60000,{},hold),[],'a long activating run stays held');
+ assert.deepEqual(t.online('collector-a',[stopped],T0+80000),[],'the next failed run is the same incident');
+ assert.deepEqual(t.online('collector-a',[],T0+100000,{},hold),[]);
+ assert.deepEqual(t.online('collector-a',[],T0+120000).map(e=>[e.type,e.title]),[['recovered','web.service']],'leaving the transition healthy recovers');
+});
 test('webhook URLs must be loopback or tailnet without embedded credentials',()=>{
  for(const url of ['http://127.0.0.1:8000/notify','http://localhost:8000/notify','http://[::1]:8000/notify','https://relay.example.ts.net:8001/notify','http://100.64.0.10:8000/notify'])assert.equal(webhookUrl(url).href,new URL(url).href);
  for(const url of ['http://example.com/notify','https://relay.ts.net.example.com/','http://user:secret@127.0.0.1:8000/notify','http://127.0.0.1:8000/notify?token=x','http://10.0.0.5:8000/','http://100.128.0.1/','file:///tmp/x','not a url'])assert.throws(()=>webhookUrl(url),/invalid-alerts-webhook/);

@@ -25,6 +25,10 @@ interface Host extends HostEntry{bestEffort:boolean;backoffMs:number[];important
 interface BeszelState extends Partial<HubResources>{status:'ok'|'stale'|'unavailable';lastSuccess:string|null;recordedAt:string|null;disks:Disk[]}
 const BESZEL_STALE_MS=10*60*1000;
 interface HostState{name:string;importantServices:string[];logUnits:LogUnit[];refreshSeconds:number;status:string;snapshot:Snapshot|null;lastAttempt:string|null;lastSuccess:string|null;error?:string;reachability?:{lastSeen:string|null;nextCheck:string;checks:number}}
+// Units that are activating or deactivating right now, under both attention kinds a failed unit can be raised as.
+function transitioning(snapshot:Snapshot):{kind:string;title:string}[] {
+ return snapshot.services.filter(s=>s.health==='transition').flatMap(s=>[{kind:'service',title:s.name},{kind:'unit',title:s.name}]);
+}
 // systemd NRestarts counters by service name; a name present in both scopes adds both counters.
 function restartCounts(snapshot:Snapshot):Record<string,number> {
  const counts:Record<string,number>={};for(const s of snapshot.services)if(typeof s.restarts==='number'&&s.manager!=='launchd')counts[s.name]=(counts[s.name]??0)+s.restarts;return counts;
@@ -186,7 +190,7 @@ export function createMonitor(config:ServerConfig,{run=exec,now=()=>Date.now(),f
    // An unreachable best-effort host is only probed, on the backoff schedule, until a probe succeeds.
    if(backoff.has(name)&&!await reachable(h)){bump(h);state.set(name,{...old,status:'offline',lastAttempt:at,error:'collector-unavailable',reachability:reach(h,old)});notifier?.tick(now());return;}
    backoff.delete(name);
-   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot)));
+   try{const snapshot=await collectHost(h);state.set(name,{name,importantServices:h.importantServices,logUnits:h.logUnits,refreshSeconds:h.refreshSeconds,status:'online',snapshot,lastAttempt:at,lastSuccess:new Date(now()).toISOString()});record(tracker.online(name,snapshot.attention,now(),restartCounts(snapshot),transitioning(snapshot)));
     if(hub&&snapshot.resources==='external'&&!h.router)await readBeszel(h);}
    catch{
     // A failed collection of a best-effort host is followed by one cheap probe: unreachable starts the backoff.
