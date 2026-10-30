@@ -18,6 +18,36 @@ test('transitions are emitted once per new attention item, recovery and offline 
  assert.deepEqual(t.online('collector-a',[],T0+920000).map(e=>e.type),['online']);
  assert.deepEqual(t.online('collector-a',[],T0+940000),[]);
 });
+test('an alerted item whose unit is only transitioning keeps its alert state',()=>{
+ const t=createTracker({offlineAfterMs:300000,graceMs:0});
+ const hold=[{kind:'service',title:'web.service'}];
+ t.online('collector-a',[],T0);
+ assert.deepEqual(t.online('collector-a',[stopped],T0+20000).map(e=>e.type),['attention']);
+ assert.deepEqual(t.online('collector-a',[],T0+40000,{},hold),[],'activating is not a recovery');
+ assert.deepEqual(t.online('collector-a',[],T0+60000,{},hold),[],'a long activating run stays held');
+ assert.deepEqual(t.online('collector-a',[stopped],T0+80000),[],'the next failed run is the same incident');
+ assert.deepEqual(t.online('collector-a',[],T0+100000,{},hold),[]);
+ assert.deepEqual(t.online('collector-a',[],T0+120000).map(e=>[e.type,e.title]),[['recovered','web.service']],'leaving the transition healthy recovers');
+});
+test('a transitioning service with a stale failed-unit record stays one incident with one recovery',async()=>{
+ const dir=await tmp();try{
+  let clock=T0,attention:Attention[]=[],services:object[]=[];const {calls,fetchImpl}=recorder();
+  const config={hosts:[host],stateDir:dir,alerts:{webhookUrl:'http://127.0.0.1:8000/notify',graceSeconds:0}};
+  const monitor=createMonitor(config,{now:()=>clock,fetch:fetchImpl,sleep:async()=>{},run:async()=>({stdout:JSON.stringify({...snap(clock,attention),services})})});
+  const step=async()=>{clock+=20000;await monitor.refresh();};
+  await serve(monitor,async base=>{
+   await monitor.refresh();
+   attention=[stopped];await step();
+   // The collector reads services and failed units separately, so a restart boundary can report the service as
+   // activating while the failed-unit list still names it; the model then raises it as a unit.
+   services=[{name:'web.service',scope:'user',health:'transition',active:'activating',sub:'start',type:'oneshot',result:'success'}];
+   attention=[{severity:'error',kind:'unit',title:'web.service',detail:'user'}];await step();await step();
+   services=[];attention=[];await step();await step();await monitor.idle();
+   assert.deepEqual(calls.map(c=>c.body.title),['[host-monitor] collector-a: service needs attention','[host-monitor] collector-a: service recovered'],'one attention and one recovery, no unit incident');
+   const events=(await (await fetch(base+'/api/events')).json() as any).events;assert.deepEqual(events.map((e:any)=>[e.type,e.kind]),[['recovered','service'],['attention','service']]);
+  });
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
 test('webhook URLs must be loopback or tailnet without embedded credentials',()=>{
  for(const url of ['http://127.0.0.1:8000/notify','http://localhost:8000/notify','http://[::1]:8000/notify','https://relay.example.ts.net:8001/notify','http://100.64.0.10:8000/notify'])assert.equal(webhookUrl(url).href,new URL(url).href);
  for(const url of ['http://example.com/notify','https://relay.ts.net.example.com/','http://user:secret@127.0.0.1:8000/notify','http://127.0.0.1:8000/notify?token=x','http://10.0.0.5:8000/','http://100.128.0.1/','file:///tmp/x','not a url'])assert.throws(()=>webhookUrl(url),/invalid-alerts-webhook/);

@@ -69,10 +69,16 @@ export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GR
  // restart); the first value seen, and the first after a gap longer than the window, is a baseline, because the time of
  // those restarts is unknown. Services with a counter count restarts only from it, so a crash seen as a failed unit and
  // then as the counter step that restarted it counts once.
- function online(host:string,attention:Attention[],at:number,restarts:Record<string,number>={}):AlertEvent[] {
+ function online(host:string,attention:Attention[],at:number,restarts:Record<string,number>={},holding:{kind:string;title:string}[]=[]):AlertEvent[] {
   const s=get(host),events:AlertEvent[]=[];s.offlineSince=null;
   if(s.offlineAlerted){s.offlineAlerted=false;events.push(event(at,host,'online',{kind:'host',title:host,severity:'ok'}));}
-  const next=new Map<string,Attention>();for(const a of attention)next.set(key(a.kind,a.title),{kind:a.kind,title:a.title,severity:a.severity,...(a.detail?{detail:a.detail}:{})});
+  // A unit that is only activating or deactivating has not recovered: a restarting oneshot reports it with a reset
+  // result, so its failed alert would otherwise clear and re-raise on every run. Hold the alert until the unit leaves
+  // the transition healthy (it then recovers) or fails again (the same incident). The hold applies before any new
+  // item is considered: services and failed units are read separately, so a restart boundary can list the same unit
+  // as transitioning and as failed, and that stale record must not open a second incident.
+  const held=new Set(holding.map(h=>key(h.kind,h.title)));
+  const next=new Map<string,Attention>();for(const a of attention)if(!held.has(key(a.kind,a.title)))next.set(key(a.kind,a.title),{kind:a.kind,title:a.title,severity:a.severity,...(a.detail?{detail:a.detail}:{})});
   if(!s.known){s.known=true;s.baseline=new Map([...next].filter(([,a])=>a.kind!=='job'&&a.severity!=='notice'&&!initialAlert(host,a)));}
   const started=(k:string,count:number)=>{const times=s.episodes.get(k)??[];for(let i=0;i<Math.min(count,100);i++)times.push(at);s.episodes.set(k,times);};
   const counted=new Set<string>(),recent=s.lastOnline!==null&&at-s.lastOnline<=restartLoop.windowMs;s.lastOnline=at;
@@ -88,7 +94,7 @@ export function createTracker({offlineAfterMs=300000,state={},graceMs=DEFAULT_GR
    s.alerted.set(k,item);events.push(event(at,host,'attention',item));
   }
   for(const [k,a] of s.alerted){
-   if(next.has(k))continue;if(looping(s.episodes.get(k)))s.loops.add(k);
+   if(next.has(k)||held.has(k))continue;if(looping(s.episodes.get(k)))s.loops.add(k);
    if(s.loops.has(k)&&s.episodes.has(k))continue;
    s.alerted.delete(k);s.loops.delete(k);events.push(event(at,host,'recovered',{kind:a.kind,title:a.title,severity:'ok'}));
   }
