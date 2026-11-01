@@ -114,7 +114,9 @@ export interface NotifierOptions{url:unknown;authEnv?:string;env?:Record<string,
 // retries, so collection never waits for it. During quiet hours alerts are held and sent as one summary afterwards.
 export function createNotifier({url,authEnv,env=process.env,kinds=DEFAULT_ALERT_KINDS,quietHours,fetchImpl=fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),retries=3,backoffMs=[2000,10000,30000],timeoutMs=5000,maxQueue=100,log=()=>{}}:NotifierOptions) {
  const target=webhookUrl(url),quiet=parseQuietHours(quietHours),queue:Message[]=[],deferred=new Map<string,AlertEvent>(),stats={sent:0,failed:0,dropped:0};let running:Promise<void>|null=null;
- const alertable=(e:AlertEvent)=>e.type==='offline'||e.type==='online'||kinds.includes(e.kind);
+ // systemd-run user scopes represent individual jobs, not host service health.
+ // Keep their transitions in history; independent resource monitoring owns host memory pressure.
+ const alertable=(e:AlertEvent)=>!(e.kind==='unit'&&/^run-u\d+\.scope$/.test(e.title))&&(e.type==='offline'||e.type==='online'||kinds.includes(e.kind));
  const clip=(s:string)=>s.length>3500?s.slice(0,3499)+'…':s;
  function format(e:AlertEvent):Message {
   const title=`${MESSAGE_PREFIX} ${e.host}: `;

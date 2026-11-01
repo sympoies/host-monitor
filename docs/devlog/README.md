@@ -61,5 +61,6 @@ Node version). The release notes carry the artifact id.
 
 ## Months
 
+- [2026-11](2026-11.md)
 - [2026-10](2026-10.md)
 - [2026-09](2026-09.md)
