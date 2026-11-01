@@ -217,6 +217,7 @@ Alert ownership follows fleet-infra decision 0002:
 
 - Beszel alerts on resource thresholds (CPU, memory, disk, temperature, GPU) and on agent host-down. Its failed-systemd alert stays disabled.
 - host-monitor alerts on service health: required units and launchd jobs, containers, and probes.
+- Failed transient `systemd-run` user job scopes (`run-u<digits>.scope`) remain in event history but do not notify as host incidents. Their recovery is likewise history-only; resource monitoring independently alerts on host memory pressure.
 - host-monitor also alerts on Android device attention (`device`: battery temperature, battery health, `/data`, battery protection), because Beszel cannot collect Android (fleet-infra decision 0003).
 
 The host-monitor offline alert means that SSH or the collector is unreachable, which Beszel cannot see. Set `offlineAfterSeconds` to `0` to leave host-down entirely to Beszel.

@@ -68,6 +68,30 @@ test('notifications use the relay JSON shape, a fixed prefix and an auth header 
  const plain=recorder();const m=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:plain.fetchImpl,sleep:async()=>{}});m.submit([{at:new Date(T0).toISOString(),host:'collector-a',type:'offline',kind:'host',title:'collector-a',severity:'error',detail:'no successful collection for 5 min'}],T0);await m.idle();
  assert.equal(plain.calls[0].init.headers.authorization,undefined);assert.equal(plain.calls[0].body.title,'[host-monitor] collector-a: collector unreachable');
 });
+test('transient job scope transitions remain history without host incident notifications',async()=>{
+ const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl});
+ const t=createTracker({graceMs:0});const history=createHistory({});t.online('host',[],T0);
+ for(const items of [[{severity:'error',kind:'unit',title:'run-u123.scope',detail:'user'}],[],[stopped],[]]){
+  const events=t.online('host',items,T0+1);for(const e of events)history.add(e);n.submit(events,T0+1);
+ }
+ await n.idle();assert.deepEqual(history.recent().map(e=>e.title),['web.service','web.service','run-u123.scope','run-u123.scope']);
+ assert.equal(calls.length,2);assert.ok(calls.every(c=>c.body.body.startsWith('web.service')));
+});
+test('system-manager scope failures and recoveries remain actionable',async()=>{
+ const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl});
+ const t=createTracker({graceMs:0});t.online('host',[],T0);
+ n.submit(t.online('host',[{severity:'error',kind:'unit',title:'run-u123.scope',detail:'system'}],T0+1),T0+1);
+ n.submit(t.online('host',[],T0+2),T0+2);await n.idle();
+ assert.equal(calls.length,2);assert.equal(calls[0].body.type,'failure');assert.equal(calls[1].body.type,'success');
+});
+test('flapping user job scopes retain manager provenance',async()=>{
+ const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl});
+ const t=createTracker({graceMs:90000});t.online('host',[],T0);
+ const unit={severity:'error',kind:'unit',title:'run-u123.scope',detail:'user'};
+ for(const [offset,items] of [[1,[unit]],[2,[]],[3,[unit]],[4,[]],[5,[unit]]] as [number,typeof unit[]][])
+  n.submit(t.online('host',items,T0+offset),T0+offset);
+ await n.idle();assert.equal(calls.length,0);
+});
 test('delivery retries are bounded, queued and never awaited by the caller',async()=>{
  const flaky=recorder({fail:2});const sleeps:number[]=[];const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl:flaky.fetchImpl,sleep:async (ms:number)=>{sleeps.push(ms);},retries:3});
  const event={at:new Date(T0).toISOString(),host:'collector-a',type:'attention' as const,kind:'service',title:'web.service',severity:'error'};
