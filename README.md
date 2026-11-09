@@ -8,6 +8,16 @@ The dashboard retains accurate offline/stale state, shows installed inactive ser
 
 Each host is collected on its own schedule and timeout. Attention transitions are kept in a bounded on-disk log and can be sent, once per transition, to the fleet notification relay. An item must last a short grace window (90 s by default) before it alerts, so a self-healing restart stays quiet, while a sustained failure or a restart loop still alerts. Journal counts are grouped by unit and priority, and macOS log counts by required launchd job; their private message contents never leave the collector.
 
+## Quiet hours
+
+Alerts are immediate by default. To hold alerts during a window, set `alerts.quietHours` in the server configuration:
+
+```json
+{"start":"23:00","end":"07:00","timeZone":"UTC","exceptions":[{"kind":"service","item":"web.service"},{"kind":"probe"}]}
+```
+
+Each exception matches the alert kind exactly; `item`, when present, must exactly match the alert item title. Omitting `item` matches all items of that kind. Matching alerts and their recoveries are sent immediately; other alerts are held for the existing summary after the window. The exceptions list is optional.
+
 ## Documentation
 
 | Read | For |
