@@ -5,7 +5,7 @@ import type {Attention} from './model.ts';
 
 export type EventType='attention'|'recovered'|'offline'|'online';
 export interface AlertEvent{at:string;host:string;type:EventType;kind:string;title:string;severity:string;detail?:string}
-export interface QuietHours{start:number;end:number;timeZone:string}
+export interface QuietHours{start:number;end:number;timeZone:string;exceptions:{kind:string;item?:string}[]}
 export interface TrackerState{[host:string]:{active?:Attention[];baseline?:Attention[];offlineAlerted?:boolean}}
 export interface Message{title:string;body:string;type:string;format?:string}
 type Fetch=(input:URL,init:RequestInit)=>Promise<Pick<Response,'ok'|'status'>&{body?:{cancel?:()=>Promise<void>}|null}>;
@@ -32,10 +32,12 @@ export function webhookUrl(value:unknown):URL {
 export function parseQuietHours(value:unknown):QuietHours|null {
  if(value===undefined||value===null)return null;
  const hm=/^([01]\d|2[0-3]):([0-5]\d)$/,minutes=(s:string)=>Number(s.slice(0,2))*60+Number(s.slice(3));
- const v=value as {start?:unknown;end?:unknown;timeZone?:unknown};
+ const v=value as {start?:unknown;end?:unknown;timeZone?:unknown;exceptions?:unknown};
  if(typeof value!=='object'||typeof v.start!=='string'||typeof v.end!=='string'||!hm.test(v.start)||!hm.test(v.end))throw new Error('invalid-quiet-hours');
  const timeZone=v.timeZone??'UTC';try{new Intl.DateTimeFormat('en-GB',{timeZone:timeZone as string});}catch{throw new Error('invalid-quiet-hours');}
- return {start:minutes(v.start),end:minutes(v.end),timeZone:timeZone as string};
+ const exceptions=v.exceptions===undefined?[]:v.exceptions;
+ if(!Array.isArray(exceptions)||exceptions.some(e=>!e||typeof e!=='object'||Array.isArray(e)||Object.keys(e).some(k=>k!=='kind'&&k!=='item')||typeof e.kind!=='string'||!/^[a-z]{1,32}$/.test(e.kind)||e.item!==undefined&&(typeof e.item!=='string'||!e.item||e.item.length>512)))throw new Error('invalid-quiet-hours');
+ return {start:minutes(v.start),end:minutes(v.end),timeZone:timeZone as string,exceptions};
 }
 export function inQuietHours(quiet:QuietHours|null,ms:number):boolean {
  if(!quiet||quiet.start===quiet.end)return false;
@@ -150,7 +152,7 @@ export function createNotifier({url,authEnv,env=process.env,kinds=DEFAULT_ALERT_
  function submit(events:AlertEvent[],at:number) {
   const list=events.filter(alertable);if(!list.length)return;
   if(inQuietHours(quiet,at)){
-   for(const e of list){const k=e.host+'\0'+key(e.kind,e.title),held=deferred.get(k);
+   for(const e of list){if(quiet?.exceptions.some(x=>x.kind===e.kind&&(x.item===undefined||x.item===e.title))){enqueue(format(e));continue;}const k=e.host+'\0'+key(e.kind,e.title),held=deferred.get(k);
     if(held&&(e.type==='recovered'||e.type==='online')&&(held.type==='attention'||held.type==='offline'))deferred.delete(k);else deferred.set(k,e);}
    return;
   }

@@ -107,6 +107,22 @@ test('quiet hours defer alerts to one summary and drop items that recovered mean
  assert.equal(calls[0].body.title,'[host-monitor] quiet hours summary');assert.match(calls[0].body.body,/collector-a service web\.service needs attention/);assert.doesNotMatch(calls[0].body.body,/web API/);
  n.tick(morning+60000);await n.idle();assert.equal(calls.length,1);
 });
+test('quiet-hour exceptions match exact kind and optional item, including recovery across midnight',async()=>{
+ const {calls,fetchImpl}=recorder();const quietHours={start:'23:00',end:'07:00',timeZone:'UTC',exceptions:[{kind:'service',item:'web.service'},{kind:'probe'}]};
+ const n=createNotifier({url:'http://127.0.0.1:8000/notify',quietHours,fetchImpl});
+ const night=Date.parse('2026-09-28T23:30:00Z'),afterMidnight=Date.parse('2026-09-29T01:00:00Z'),morning=Date.parse('2026-09-29T07:00:00Z');
+ const event={at:new Date(night).toISOString(),host:'collector-a',type:'attention' as const,kind:'service',title:'web.service',severity:'error'};
+ n.submit([event,{...event,title:'web.service.extra'},{...event,kind:'probe',title:'api'},{...event,kind:'unit'}],night);
+ n.submit([{...event,type:'recovered',severity:'ok'}],afterMidnight);await n.idle();
+ assert.deepEqual(calls.map(c=>[c.body.type,c.body.body]),[['failure','web.service'],['failure','api'],['success','web.service']]);
+ n.tick(morning);await n.idle();assert.equal(calls.length,4);assert.match(calls[3].body.body,/web\.service\.extra/);assert.match(calls[3].body.body,/unit web\.service/);
+});
+test('quiet hours are off by default and invalid exceptions are rejected',async()=>{
+ const {calls,fetchImpl}=recorder();const n=createNotifier({url:'http://127.0.0.1:8000/notify',fetchImpl});
+ n.submit([{at:new Date(T0).toISOString(),host:'collector-a',type:'attention',kind:'service',title:'web.service',severity:'error'}],T0);await n.idle();assert.equal(calls.length,1);
+ for(const exceptions of [null,{},[null],[{}],[{kind:''}],[{kind:'Service'}],[{kind:'service',item:''}],[{kind:'service',item:42}],[{kind:'service',extra:true}]])
+  assert.throws(()=>parseQuietHours({start:'23:00',end:'07:00',exceptions}),/invalid-quiet-hours/);
+});
 test('history is an append-only JSONL log capped by size and rotation that survives restart',async()=>{
  const dir=await tmp();try{
   const h=createHistory({dir,maxBytes:600,keep:50});await h.load();
