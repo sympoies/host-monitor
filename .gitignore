@@ -6,3 +6,4 @@ coverage/
 public/app.js
 public/order.js
 public/tabs.js
+public/i18n.js

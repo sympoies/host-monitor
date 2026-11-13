@@ -27,7 +27,7 @@ server.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('liste
 const address=server.address();if(!address||typeof address==='string')throw Error('fixture server unavailable');
 const browser=await chromium.launch({headless:true,channel:'chrome',chromiumSandbox:true});
 try{
- const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ const page=await browser.newPage({locale:'zh-TW',viewport:{width:1440,height:1000}});
  const errors:string[]=[];page.on('pageerror',(error:Error)=>errors.push(error.message));
  if(mode==='large')await page.addInitScript(()=>{
   const state=globalThis as typeof globalThis & {disclosureScans:{calls:number;rows:number}};
@@ -141,9 +141,9 @@ try{
    await page.getByRole('button',{name:'全部收合',exact:true}).click();
    assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(n=>!n.open)),true);
    await refresh();assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(n=>!n.open)),true,'collapse survives polling');
-   await page.locator('#agent-session-filters').getByRole('tab',{name:/Working/}).click();
+   await page.locator('#agent-session-filters').getByRole('tab',{name:/工作中/}).click();
    await page.getByRole('button',{name:'全部展開',exact:true}).click();
-   await page.locator('#agent-session-filters').getByRole('tab',{name:/All/}).click();
+   await page.locator('#agent-session-filters').getByRole('tab',{name:/全部/}).click();
    assert.equal(await details.evaluateAll((nodes:HTMLDetailsElement[])=>nodes.every(n=>n.open)),true,'toggle includes filtered rows');
    await details.first().locator('summary').click();await refresh();
    assert.equal(await details.first().evaluate((node:HTMLDetailsElement)=>node.open),false,'individual collapse survives polling');

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>Host Monitor · 主機狀態</title>
+  <title data-i18n="title">Host Monitor</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -13,67 +13,67 @@
     <div class="topbar-inner">
       <div class="brand">
         <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 12h4l2.5-6 4 12 2.5-6H21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <div><h1>Host Monitor</h1><p>主機資源與服務狀態</p></div>
+        <div><h1>Host Monitor</h1><p data-i18n="brand.tagline"></p></div>
       </div>
-      <div class="update"><span id="updated">取得主機資料中</span><button id="refresh">重新整理</button></div>
+      <div class="update"><span id="updated" data-i18n="updated.loading"></span><button id="refresh" data-i18n="refresh"></button><button id="language" type="button" data-i18n="lang.other" data-i18n-label="lang.switch"></button></div>
     </div>
   </header>
   <main>
     <div id="host-filters" class="filter-tabs fleet-filters" hidden></div>
-    <section class="fleet" aria-label="主機選擇" id="hosts"></section>
-    <div class="fleet-tools"><button id="reset-order" type="button" hidden>重設主機順序</button></div>
+    <section class="fleet" data-i18n-label="hosts.label" id="hosts"></section>
+    <div class="fleet-tools"><button id="reset-order" type="button" data-i18n="hosts.reset" hidden></button></div>
     <div id="connection" role="status"></div>
     <section class="section-head">
-      <div><p class="eyebrow">主機詳情</p><h2 id="host-title">正在讀取主機</h2></div>
+      <div><p class="eyebrow" data-i18n="detail.eyebrow"></p><h2 id="host-title" data-i18n="detail.loading"></h2></div>
       <span id="summary" class="pill"></span>
     </section>
     <section id="attention" class="attention" aria-live="polite"></section>
-    <section id="resource-panel" class="panel" aria-label="資源指標">
-      <h2 class="visually-hidden">資源指標</h2><div id="resources" class="resources" aria-label="硬體資源"></div>
+    <section id="resource-panel" class="panel" data-i18n-label="panel.resources">
+      <h2 class="visually-hidden" data-i18n="panel.resources"></h2><div id="resources" class="resources" data-i18n-label="resources.label"></div>
     </section>
     <div class="tab-tools">
-      <div id="host-tabs" class="host-tabs" role="tablist" aria-label="主機詳情區段"></div>
+      <div id="host-tabs" class="host-tabs" role="tablist" data-i18n-label="tabs.label"></div>
       <details class="tab-order-menu">
-        <summary>調整分頁順序</summary>
+        <summary data-i18n="tabs.orderMenu"></summary>
         <div class="tab-order-actions">
-          <button id="move-tab-left" type="button" aria-label="Move selected tab left">向左移動</button>
-          <button id="move-tab-right" type="button" aria-label="Move selected tab right">向右移動</button>
-          <button id="reset-tab-order" type="button" aria-label="Reset tab order">重設分頁順序</button>
+          <button id="move-tab-left" type="button" data-i18n="tabs.moveLeft" data-i18n-label="tabs.moveLeftLabel"></button>
+          <button id="move-tab-right" type="button" data-i18n="tabs.moveRight" data-i18n-label="tabs.moveRightLabel"></button>
+          <button id="reset-tab-order" type="button" data-i18n="tabs.reset" data-i18n-label="tabs.reset"></button>
         </div>
       </details>
     </div>
     <section id="disk-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-disks" tabindex="0">
-      <div class="panel-head"><div><h2>磁碟容量</h2><p>主機檔案系統的使用量與剩餘空間</p></div></div>
+      <div class="panel-head"><div><h2 data-i18n="tab.disks"></h2><p data-i18n="disks.desc"></p></div></div>
       <div id="disk-filters" class="filter-tabs section-filters" hidden></div><div id="disks" class="disk-list"></div>
     </section>
     <section id="checks-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-checks" tabindex="0">
-      <div class="panel-head"><div><h2>功能檢查與最近錯誤</h2><p>排程工作顯示最近成功與 snapshot 狀態；功能檢查顯示端點回應；journal 顯示近一小時錯誤數量</p></div></div>
+      <div class="panel-head"><div><h2 data-i18n="tab.checks"></h2><p data-i18n="checks.desc"></p></div></div>
       <div id="checks-filters" class="filter-tabs section-filters" hidden></div><div id="checks" class="checks"></div>
     </section>
     <section id="events-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-events" tabindex="0">
-      <div class="panel-head"><div><h2>最近事件</h2><p>需要關注、恢復與連線中斷的轉換紀錄</p></div></div>
+      <div class="panel-head"><div><h2 data-i18n="tab.events"></h2><p data-i18n="events.desc"></p></div></div>
       <div id="events-filters" class="filter-tabs section-filters" hidden></div><div id="events" class="events"></div>
     </section>
     <section id="agents-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-agents" tabindex="0">
-      <div class="panel-head"><div><h2>工作階段</h2><p>本機執行中的 agent 與活動狀態</p></div></div>
-      <div class="session-tools"><button id="toggle-session-details" type="button" hidden>全部收合</button></div>
-      <div id="agent-session-filters" class="filter-tabs section-filters" role="tablist" aria-label="Agent session filters"></div>
+      <div class="panel-head"><div><h2 data-i18n="tab.agents"></h2><p data-i18n="agents.desc"></p></div></div>
+      <div class="session-tools"><button id="toggle-session-details" type="button" data-i18n="sessions.collapseAll" hidden></button></div>
+      <div id="agent-session-filters" class="filter-tabs section-filters" role="tablist" data-i18n-label="filters.sessions"></div>
       <div id="agent-sessions" class="agent-sessions"></div>
     </section>
     <section id="services-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-services" tabindex="0">
       <div class="panel-head">
-        <div><h2>服務</h2><p id="service-count">主機服務與容器</p></div>
-        <div class="filters"><input id="search" type="search" placeholder="搜尋服務名稱" aria-label="搜尋服務"><select id="filter" aria-label="服務篩選"><option value="all">全部已安裝服務</option><option value="important">主要服務</option><option value="attention">需要關注</option><option value="running">執行中</option></select></div>
+        <div><h2 data-i18n="tab.services"></h2><p id="service-count" data-i18n="services.desc"></p></div>
+        <div class="filters"><input id="search" type="search" data-i18n-placeholder="services.searchPlaceholder" data-i18n-label="services.searchLabel"><select id="filter" data-i18n-label="services.filterLabel"><option value="all" data-i18n="services.optionAll"></option><option value="important" data-i18n="services.optionImportant"></option><option value="attention" data-i18n="services.optionAttention"></option><option value="running" data-i18n="services.optionRunning"></option></select></div>
       </div>
       <div id="service-filters" class="filter-tabs section-filters" hidden></div>
-      <div class="table-wrap"><table><thead><tr><th>服務</th><th>狀態</th><th>來源</th><th>啟動方式 / 詳細狀態</th></tr></thead><tbody id="services"></tbody></table></div>
-      <p id="empty" class="empty" hidden>沒有符合條件的服務</p>
-      <section id="log-panel" class="log-panel" aria-label="服務日誌" hidden>
-        <div class="panel-head"><div><h2 id="log-title">服務日誌</h2><p>最近 120 行 · 僅在點選時讀取</p></div><div class="log-actions"><button id="log-refresh" type="button">重新讀取</button><button id="log-close" type="button">關閉</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th data-i18n="services.colService"></th><th data-i18n="services.colState"></th><th data-i18n="services.colSource"></th><th data-i18n="services.colDetails"></th></tr></thead><tbody id="services"></tbody></table></div>
+      <p id="empty" class="empty" data-i18n="services.empty" hidden></p>
+      <section id="log-panel" class="log-panel" data-i18n-label="log.panel" hidden>
+        <div class="panel-head"><div><h2 id="log-title" data-i18n="log.panel"></h2><p data-i18n="log.desc"></p></div><div class="log-actions"><button id="log-refresh" type="button" data-i18n="log.refresh"></button><button id="log-close" type="button" data-i18n="log.close"></button></div></div>
         <pre id="log-body" class="log-body"></pre>
       </section>
     </section>
-    <footer>每台主機各自提供資源與服務資訊 · 自動更新 · 服務待命不等於故障</footer>
+    <footer data-i18n="footer"></footer>
   </main>
 </body>
 </html>

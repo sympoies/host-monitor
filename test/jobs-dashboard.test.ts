@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
-import {stripTypeScriptTypes} from 'node:module';
+import {stripTypeScriptTypes} from 'node:module';import {translate,loadLanguage,saveLanguage,timeLocale,htmlLang} from '../public/i18n.ts';
 // Execute the actual compiled dashboard with a small DOM fixture. Network and timers are inert.
 class Element{
  children:Element[]=[];dataset:Record<string,string>={};className='';hidden=false;attributes:Record<string,string>={};
@@ -10,8 +10,8 @@ class Element{
 }
 test('checks panel renders scheduled status, revisions, retry and failure without HTML interpolation',()=>{
  const roots=new Map<string,Element>(),root=(id:string)=>{if(!roots.has(id))roots.set(id,new Element());return roots.get(id)!;};
- const document={getElementById:root,createElement:()=>new Element(),createTextNode:(text:string)=>new Element(text)};
- const context=vm.createContext({document,location:{hash:''},localStorage:{getItem:()=>null},loadTabState:()=>({selected:'agents',order:[]}),DEFAULT_TAB_ORDER:[],fetch:()=>new Promise(()=>{}),setInterval:()=>{},Map,Date});
+ const document={getElementById:root,createElement:()=>new Element(),createTextNode:(text:string)=>new Element(text),querySelectorAll:()=>[],documentElement:{},title:'',body:{dataset:{}}};
+ const context=vm.createContext({document,navigator:{languages:['zh-TW']},translate,loadLanguage,saveLanguage,timeLocale,htmlLang,location:{hash:''},localStorage:{getItem:()=>null},loadTabState:()=>({selected:'agents',order:[]}),DEFAULT_TAB_ORDER:[],fetch:()=>new Promise(()=>{}),setInterval:()=>{},Map,Date});
  const source=fs.readFileSync(new URL('../public/app.ts',import.meta.url),'utf8');
  const compiled=stripTypeScriptTypes(source).replace(/^import .*$/gm,'');
  vm.runInContext(compiled,context,{filename:'dashboard.js'});
