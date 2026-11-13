@@ -16,7 +16,9 @@ test('the dashboard renders the text the agentless expectation looks for, in the
  const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
  assert.ok(app.includes("t('metric.noCollector'),t('metric.agentlessDetail')")&&app.includes("t('metric.agentlessDetail')")&&app.includes("t('disks.agentless')"));
  for(const language of ['zh','en'] as const)for(const key of ['metric.agentlessDetail','disks.agentless'] as const)assert.ok(dictionaries[language][key].startsWith(dictionaries[language]['summary.agentless']),`${language} ${key}`);
- assert.ok(dictionaries.zh['metric.agentlessDetail'].startsWith(AGENTLESS_TEXT)&&dictionaries.zh['disks.agentless'].startsWith(AGENTLESS_TEXT));
+ // The Chinese wording is pinned here as literals, so a changed dictionary value fails this test.
+ assert.equal(AGENTLESS_TEXT,'僅 ssh 基本資訊');
+ assert.deepEqual([dictionaries.zh['summary.agentless'],dictionaries.zh['metric.resources'],dictionaries.zh['metric.noCollector'],dictionaries.zh['metric.agentlessDetail'],dictionaries.zh['disks.agentless']],['僅 ssh 基本資訊','資源指標','未安裝 collector','僅 ssh 基本資訊：不採集 CPU、記憶體、磁碟與服務','僅 ssh 基本資訊：不採集磁碟容量']);
 });
 test('a snapshot without the optional resources field is treated as collected, like the dashboard',()=>{
  assert.equal(resourceExpectation(snapshot('linux-legacy')).resources,'collected');
@@ -37,6 +39,7 @@ test('an Android device collects its own resources: four metrics (battery, tempe
  assert.deepEqual(resourceExpectation(snapshot('phone-a')),{resources:'collected',metrics:4,diskRows:true});
  const app=fs.readFileSync(path.join(import.meta.dirname,'..','public','app.ts'),'utf8');
  for(const key of ['metric.battery','metric.batteryTemperature','metric.memory','metric.dataStorage'])assert.ok(app.includes(`metric(t('${key}')`),key);
+ assert.deepEqual(['metric.battery','metric.batteryTemperature','metric.memory','metric.dataStorage'].map(key=>dictionaries.zh[key as 'metric.battery']),['電池電量','電池溫度','記憶體使用率','/data 儲存空間']);
 });
 test('dashboard tabs preserve the current host section order, with checks and events after disk capacity',()=>{
  const html=fs.readFileSync(path.join(import.meta.dirname,'..','public','index.html'),'utf8');
