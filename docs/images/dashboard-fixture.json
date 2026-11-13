@@ -1,0 +1,520 @@
+{
+ "comment": "Synthetic data only: fictional hosts, services, containers, probes, and sessions used to render docs/images/dashboard.png.",
+ "fleet": {
+  "schemaVersion": 1,
+  "serverTime": "2026-06-15T09:30:00.000Z",
+  "refreshSeconds": 60,
+  "defaultOrder": [
+   "alpha",
+   "bravo",
+   "charlie",
+   "delta"
+  ],
+  "hosts": [
+   {
+    "name": "alpha",
+    "status": "online",
+    "stale": false,
+    "lastSuccess": "2026-06-15T09:30:00.000Z",
+    "snapshot": {
+     "schemaVersion": 1,
+     "host": "alpha",
+     "platform": "linux",
+     "resources": "collected",
+     "collectedAt": "2026-06-15T09:30:00.000Z",
+     "attention": [
+      {
+       "severity": "error",
+       "kind": "service",
+       "title": "report-exporter.service",
+       "detail": "Failed (exit-code)"
+      },
+      {
+       "severity": "error",
+       "kind": "container",
+       "title": "search-indexer",
+       "detail": "Required container is not running"
+      },
+      {
+       "severity": "error",
+       "kind": "probe",
+       "title": "Search API",
+       "detail": "HTTP 503"
+      },
+      {
+       "severity": "warning",
+       "kind": "memory",
+       "title": "Memory pressure",
+       "detail": "91% used"
+      },
+      {
+       "severity": "warning",
+       "kind": "disk",
+       "title": "/data is 93% full",
+       "detail": "35.0 GiB available"
+      }
+     ],
+     "hardware": {
+      "cpuCount": 8,
+      "cpuBusy": 78.4,
+      "load": [
+       6.2,
+       5.8,
+       5.1
+      ],
+      "uptime": 1659600,
+      "kernel": "6.8.0-example"
+     },
+     "memory": {
+      "total": 17179869184,
+      "available": 1503238554,
+      "used": 15676630630
+     },
+     "disks": [
+      {
+       "source": "/dev/vda1",
+       "type": "ext4",
+       "total": 107374182400,
+       "used": 68719476736,
+       "available": 38654705664,
+       "percent": 64,
+       "mount": "/"
+      },
+      {
+       "source": "/dev/vdb1",
+       "type": "ext4",
+       "total": 536870912000,
+       "used": 499289948160,
+       "available": 37580963840,
+       "percent": 93,
+       "mount": "/data"
+      }
+     ],
+     "services": [
+      {
+       "name": "ingest-worker.service",
+       "scope": "system",
+       "health": "ok",
+       "description": "Ingest worker",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "active",
+       "sub": "running",
+       "required": true
+      },
+      {
+       "name": "report-exporter.service",
+       "scope": "system",
+       "health": "error",
+       "description": "Nightly report exporter",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "failed",
+       "sub": "failed",
+       "required": true,
+       "result": "exit-code"
+      },
+      {
+       "name": "api-gateway.service",
+       "scope": "system",
+       "health": "ok",
+       "description": "API gateway",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "active",
+       "sub": "running",
+       "required": true
+      },
+      {
+       "name": "cache-warmup.service",
+       "scope": "system",
+       "health": "idle",
+       "description": "Cache warm-up (oneshot)",
+       "installed": "enabled",
+       "type": "oneshot",
+       "active": "inactive",
+       "sub": "dead",
+       "required": false,
+       "result": "success"
+      },
+      {
+       "name": "log-rotate.timer",
+       "scope": "user",
+       "health": "inactive",
+       "description": "Log rotation timer",
+       "installed": "static",
+       "type": "simple",
+       "active": "inactive",
+       "sub": "dead",
+       "required": false
+      }
+     ],
+     "containers": [
+      {
+       "name": "web-proxy",
+       "image": "example/proxy:2.4",
+       "state": "running",
+       "status": "Up 6 days (healthy)",
+       "health": "healthy"
+      },
+      {
+       "name": "queue-broker",
+       "image": "example/queue:1.9",
+       "state": "running",
+       "status": "Up 6 days (healthy)",
+       "health": "healthy"
+      },
+      {
+       "name": "search-indexer",
+       "image": "example/indexer:0.7",
+       "state": "exited",
+       "status": "Exited (1) 12 minutes ago"
+      }
+     ],
+     "probes": [
+      {
+       "name": "Public API",
+       "ok": true,
+       "status": 200
+      },
+      {
+       "name": "Search API",
+       "ok": false,
+       "status": 503
+      }
+     ],
+     "journalErrors": [
+      {
+       "unit": "report-exporter.service",
+       "scope": "system",
+       "count": 14,
+       "lastAt": "2026-06-15T09:18:00.000Z"
+      }
+     ],
+     "agentSessions": {
+      "status": "ok",
+      "sessions": [
+       {
+        "agent": "claude",
+        "status": "running",
+        "phase": "working",
+        "role": "coordinator",
+        "label": "Project coordinator",
+        "title": "Refactor the report exporter",
+        "repoName": "example/reports",
+        "account": "team-a",
+        "mode": "interactive",
+        "coordinationMode": "advisory",
+        "lineageDepth": 0,
+        "resumable": true,
+        "createdAt": "2026-06-15T07:10:00.000Z",
+        "lastActivityAt": "2026-06-15T09:29:00.000Z"
+       },
+       {
+        "agent": "codex",
+        "status": "running",
+        "phase": "working",
+        "role": "worker",
+        "label": "Dispatched worker",
+        "title": "Fix search indexer restart loop",
+        "repoName": "example/search",
+        "account": "team-a",
+        "mode": "interactive",
+        "coordinationMode": "advisory",
+        "lineageDepth": 1,
+        "resumable": true,
+        "createdAt": "2026-06-15T08:35:00.000Z",
+        "lastActivityAt": "2026-06-15T09:28:00.000Z"
+       },
+       {
+        "agent": "claude",
+        "status": "running",
+        "phase": "waiting",
+        "role": "reviewer",
+        "label": "Reviewer",
+        "title": "Review exporter retry change",
+        "repoName": "example/reports",
+        "account": "team-a",
+        "mode": "interactive",
+        "coordinationMode": "advisory",
+        "lineageDepth": 1,
+        "resumable": true,
+        "createdAt": "2026-06-15T08:00:00.000Z",
+        "lastActivityAt": "2026-06-15T09:21:00.000Z"
+       }
+      ]
+     }
+    },
+    "importantServices": []
+   },
+   {
+    "name": "bravo",
+    "status": "online",
+    "stale": false,
+    "lastSuccess": "2026-06-15T09:30:00.000Z",
+    "snapshot": {
+     "schemaVersion": 1,
+     "host": "bravo",
+     "platform": "linux",
+     "resources": "collected",
+     "collectedAt": "2026-06-15T09:30:00.000Z",
+     "attention": [],
+     "hardware": {
+      "cpuCount": 4,
+      "cpuBusy": 12.1,
+      "load": [
+       0.35,
+       0.4,
+       0.38
+      ],
+      "uptime": 3549600,
+      "kernel": "6.8.0-example"
+     },
+     "memory": {
+      "total": 8589934592,
+      "available": 6012954214,
+      "used": 2576980378
+     },
+     "disks": [
+      {
+       "source": "/dev/vda1",
+       "type": "ext4",
+       "total": 85899345920,
+       "used": 32641751450,
+       "available": 53257594470,
+       "percent": 38,
+       "mount": "/"
+      }
+     ],
+     "services": [
+      {
+       "name": "postgresql.service",
+       "scope": "system",
+       "health": "ok",
+       "description": "Database",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "active",
+       "sub": "running",
+       "required": true
+      },
+      {
+       "name": "nginx.service",
+       "scope": "system",
+       "health": "ok",
+       "description": "Web server",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "active",
+       "sub": "running",
+       "required": true
+      },
+      {
+       "name": "backup.service",
+       "scope": "system",
+       "health": "idle",
+       "description": "Nightly backup (oneshot)",
+       "installed": "enabled",
+       "type": "oneshot",
+       "active": "inactive",
+       "sub": "dead",
+       "required": false,
+       "result": "success"
+      }
+     ],
+     "containers": [
+      {
+       "name": "metrics",
+       "image": "example/metrics:3.1",
+       "state": "running",
+       "status": "Up 2 weeks (healthy)",
+       "health": "healthy"
+      }
+     ],
+     "probes": [
+      {
+       "name": "Dashboard",
+       "ok": true,
+       "status": 200
+      }
+     ],
+     "journalErrors": [],
+     "agentSessions": {
+      "status": "disabled",
+      "sessions": []
+     }
+    }
+   },
+   {
+    "name": "charlie",
+    "status": "online",
+    "stale": false,
+    "lastSuccess": "2026-06-15T09:30:00.000Z",
+    "snapshot": {
+     "schemaVersion": 1,
+     "host": "charlie",
+     "platform": "darwin",
+     "resources": "external",
+     "collectedAt": "2026-06-15T09:30:00.000Z",
+     "attention": [],
+     "hardware": {
+      "cpuCount": 10,
+      "load": [
+       0,
+       0,
+       0
+      ],
+      "uptime": 802800,
+      "kernel": "Darwin"
+     },
+     "services": [
+      {
+       "name": "com.example.sync",
+       "scope": "user",
+       "health": "ok",
+       "manager": "launchd",
+       "active": "running",
+       "required": true,
+       "description": "Sync agent"
+      },
+      {
+       "name": "com.example.report",
+       "scope": "user",
+       "health": "idle",
+       "manager": "launchd",
+       "active": "waiting",
+       "required": true,
+       "description": "Hourly report job"
+      }
+     ],
+     "agentSessions": {
+      "status": "disabled",
+      "sessions": []
+     }
+    },
+    "beszel": {
+     "status": "ok",
+     "recordedAt": "2026-06-15T09:30:00.000Z",
+     "lastSuccess": "2026-06-15T09:30:00.000Z",
+     "cpuBusy": 8.5,
+     "memory": {
+      "total": 34359738368,
+      "used": 12025908429,
+      "available": 22333829939
+     },
+     "disks": [
+      {
+       "source": "Beszel",
+       "type": "root",
+       "mount": "/",
+       "total": 1073741824000,
+       "used": 440234147840,
+       "available": 633507676160,
+       "percent": 41
+      }
+     ]
+    }
+   },
+   {
+    "name": "delta",
+    "status": "offline",
+    "stale": true,
+    "lastSuccess": "2026-06-15T08:43:00.000Z",
+    "snapshot": {
+     "schemaVersion": 1,
+     "host": "delta",
+     "platform": "linux",
+     "resources": "collected",
+     "collectedAt": "2026-06-15T08:43:00.000Z",
+     "attention": [],
+     "hardware": {
+      "cpuCount": 4,
+      "cpuBusy": 9.3,
+      "load": [
+       0.2,
+       0.2,
+       0.2
+      ],
+      "uptime": 5443200,
+      "kernel": "6.8.0-example"
+     },
+     "memory": {
+      "total": 8589934592,
+      "available": 5261334938,
+      "used": 3328599654
+     },
+     "disks": [
+      {
+       "source": "/dev/vda1",
+       "type": "ext4",
+       "total": 64424509440,
+       "used": 33500744909,
+       "available": 30923764531,
+       "percent": 52,
+       "mount": "/"
+      }
+     ],
+     "services": [
+      {
+       "name": "mail-relay.service",
+       "scope": "system",
+       "health": "ok",
+       "description": "Mail relay",
+       "installed": "enabled",
+       "type": "simple",
+       "active": "active",
+       "sub": "running",
+       "required": true
+      }
+     ],
+     "agentSessions": {
+      "status": "disabled",
+      "sessions": []
+     }
+    },
+    "reachability": {
+     "lastSeen": "2026-06-15T08:43:00.000Z",
+     "nextCheck": "2026-06-15T09:33:00.000Z",
+     "checks": 9
+    }
+   }
+  ]
+ },
+ "events": [
+  {
+   "at": "2026-06-15T09:18:00.000Z",
+   "host": "alpha",
+   "type": "attention",
+   "kind": "container",
+   "title": "search-indexer",
+   "severity": "error",
+   "detail": "Required container is not running"
+  },
+  {
+   "at": "2026-06-15T09:18:00.000Z",
+   "host": "alpha",
+   "type": "attention",
+   "kind": "service",
+   "title": "report-exporter.service",
+   "severity": "error",
+   "detail": "Failed (exit-code)"
+  },
+  {
+   "at": "2026-06-15T08:55:00.000Z",
+   "host": "alpha",
+   "type": "attention",
+   "kind": "probe",
+   "title": "Search API",
+   "severity": "error",
+   "detail": "HTTP 503"
+  },
+  {
+   "at": "2026-06-15T06:30:00.000Z",
+   "host": "alpha",
+   "type": "recovered",
+   "kind": "disk",
+   "title": "/ is 88% full",
+   "severity": "warning"
+  }
+ ]
+}
