@@ -15,6 +15,8 @@ h1{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--strong)}
 .brand p{font-size:12px;color:var(--muted);margin-top:1px}
 .update{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .update button{white-space:nowrap;flex:none}
+#language{display:inline-flex;align-items:center;gap:6px}
+#language svg{flex:none}
 #updated::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;vertical-align:1px;background:var(--faint)}
 body[data-link=ok] #updated::before{background:var(--green);box-shadow:0 0 0 3px #addb6726}
 body[data-link=down] #updated::before{background:var(--red);box-shadow:0 0 0 3px #ef535026}
