@@ -69,6 +69,16 @@ try{
   await switcher.click();assert.equal(await html.getAttribute('lang'),from==='zh'?'zh-Hant':'en');await page.reload();assert.equal(await html.getAttribute('lang'),from==='zh'?'zh-Hant':'en','switching back is remembered too');
   await context.close();
  }
+ // The switch carries a decorative globe icon, keeps its accessible name, and lines up with Refresh in both themes and at both widths.
+ for(const colorScheme of ['dark','light'] as const)for(const [width,height] of [[1440,1000],[390,844]] as const){
+  const context=await browser.newContext({locale:'en-US',colorScheme,viewport:{width,height}}),page=await context.newPage();await page.goto(base);await page.locator('#hosts .host').first().waitFor();
+  const icon=page.locator('#language svg');assert.equal(await icon.count(),1);assert.equal(await icon.getAttribute('aria-hidden'),'true');
+  assert.equal(await page.getByRole('button',{name:dictionaries.en['lang.switch'],exact:true}).count(),1,'accessible name stays the language-switch label');
+  const [switchBox,refreshBox]=[await page.locator('#language').boundingBox(),await page.locator('#refresh').boundingBox()];
+  assert.ok(switchBox&&refreshBox&&Math.abs(switchBox.height-refreshBox.height)<=0.5,`${colorScheme} ${width}px: switch height ${switchBox?.height} vs Refresh ${refreshBox?.height}`);
+  assert.ok(switchBox.x>=0&&switchBox.x+switchBox.width<=width,'switch stays inside the viewport');
+  await context.close();
+ }
  // Without usable storage the page still follows the browser language and the switch still works for the session.
  {const context=await browser.newContext({locale:'en-US'}),page=await context.newPage();
   await page.addInitScript(()=>{Object.defineProperty(window,'localStorage',{get(){throw new Error('blocked');}});});
