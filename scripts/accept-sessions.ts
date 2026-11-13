@@ -17,7 +17,7 @@ const base='http://127.0.0.1:'+(monitor.server.address() as net.AddressInfo).por
 const out=process.argv[2];if(out)await fs.mkdir(out,{recursive:true});
 try{
  await monitor.refresh();
- const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors:string[]=[];
+ const page=await browser.newPage({locale:'zh-TW',viewport:{width:1440,height:1000}}),errors:string[]=[];
  page.on('pageerror',(error:Error)=>errors.push(error.message));await page.goto(base);
  await page.locator('#hosts .host').first().waitFor();
  assert.equal(await page.locator('#agent-sessions').count(),1,'host detail owns an Agent sessions section');

@@ -1,5 +1,7 @@
 import {loadOrder,saveOrder,clearOrder,moveHost,mergeVisibleOrder} from './order.js';
 import {DEFAULT_TAB_ORDER,loadTabState,saveTabState,clearTabState,moveTab,moveVisibleTab} from './tabs.js';
+import {translate,loadLanguage,saveLanguage,timeLocale,htmlLang} from './i18n.js';
+import type {Key,Language} from './i18n.js';
 // Types for the read-only JSON API this page renders; the server's projection keeps only these fields.
 interface Attention{severity:string;kind:string;title:string;detail?:string}
 interface Service{name:string;scope:string;health:string;manager?:string;description?:string;installed?:string;active?:string;sub?:string;type?:string;result?:string;required?:boolean}
@@ -20,6 +22,9 @@ let events:HostEvent[]=[],fleet:Fleet|undefined,selected:string|undefined=locati
 const $=(id:string)=>document.getElementById(id) as HTMLElement;
 const input=(id:string)=>$(id) as HTMLInputElement;
 const storage=()=>{try{return localStorage;}catch{return {getItem:()=>null,setItem:()=>{throw Error();},removeItem:()=>{throw Error();}};}};
+// The language follows the browser until the header switch overrides it; the choice is saved in this browser only.
+let language:Language=loadLanguage(storage(),navigator.languages);
+const t=(key:Key,params?:Record<string,string|number>)=>translate(language,key,params);
 let tabState=loadTabState(storage(),DEFAULT_TAB_ORDER);
 preferredTab=tabState.selected;
 const sectionFilter=new Map<string,string>();
@@ -34,44 +39,46 @@ function drawFilterTabs(id:string,label:string,items:{id:string;label:string;cou
  });root.append(button);}
 }
 const el=(tag:string,text?:string,className?:string)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;};
-const bytes=(n:number|undefined)=>n!==undefined&&Number.isFinite(n)?n>=2**30?(n/2**30).toFixed(1)+' GiB':n>=2**20?(n/2**20).toFixed(0)+' MiB':(n/1024).toFixed(0)+' KiB':'無資料';
-const percent=(n:number|undefined)=>n!==undefined&&Number.isFinite(n)?n.toFixed(1)+'%':'無資料';
+const bytes=(n:number|undefined)=>n!==undefined&&Number.isFinite(n)?n>=2**30?(n/2**30).toFixed(1)+' GiB':n>=2**20?(n/2**20).toFixed(0)+' MiB':(n/1024).toFixed(0)+' KiB':t('nodata');
+const percent=(n:number|undefined)=>n!==undefined&&Number.isFinite(n)?n.toFixed(1)+'%':t('nodata');
 const pill=(text:string,kind:string)=>el('span',text,'pill '+kind);
-const time=(s:string|null|undefined)=>s?new Date(s).toLocaleTimeString('zh-TW',{hour12:false}):'尚未取得';
+const time=(s:string|null|undefined)=>s?new Date(s).toLocaleTimeString(timeLocale(language),{hour12:false}):t('time.never');
 const bar=(n:number|undefined)=>{const div=el('div',undefined,'bar '+((n??0)>=95?'error':(n??0)>=85?'warn':''));const span=el('span');span.style.width=Math.max(0,Math.min(100,n||0))+'%';div.append(span);return div;};
-const healthLabel:Record<string,string>={ok:'正常',healthy:'健康',error:'異常',unhealthy:'異常',idle:'待命',inactive:'未啟動',transition:'狀態變更中',unknown:'無法確認'};
+const healthLabel=(health:string)=>health in healthKey?t(healthKey[health]):t('unknown');
+const healthKey:Record<string,Key>={ok:'health.ok',healthy:'health.healthy',error:'health.error',unhealthy:'health.unhealthy',idle:'health.idle',inactive:'health.inactive',transition:'health.transition'};
 // Beszel readings have their own freshness; expired or failed readings never render as current.
 const externalResources=(s:Snapshot|null|undefined)=>s?.resources==='external';
 // Android devices are read over adb by the server (fleet-infra decision 0003): battery and thermal state replace CPU and GPU.
 const isAndroid=(s:Snapshot|null|undefined)=>s?.platform==='android';
-const batteryHealth:Record<string,string>={good:'良好',overheat:'過熱',dead:'損壞','over-voltage':'過電壓',failure:'故障',cold:'過冷',unknown:'無法確認'};
-const powerLabel:Record<string,string>={ac:'AC 供電',usb:'USB 供電',wireless:'無線充電',dock:'底座供電',none:'未接電源'};
-const thermalLabel=['正常','輕微','中等','嚴重','危急','緊急','關機'];
+const batteryHealth=(value:string)=>['good','overheat','dead','over-voltage','failure','cold'].includes(value)?t(('battery.'+value) as Key):value==='unknown'?t('unknown'):value;
+const powerLabel=(value:string)=>['ac','usb','wireless','dock','none'].includes(value)?t(('power.'+value) as Key):value;
+const thermalLabel=(status:number)=>Number.isInteger(status)&&status>=0&&status<=6?t(('thermal.'+status) as Key):String(status);
 const celsius=(n:number)=>n.toFixed(1)+'°C';
 function beszelReason(host:HostView){
  const b=host.beszel;
- return !b?'Beszel 未設定':b.status==='stale'?'Beszel 資料已過期':b.status==='unavailable'?'Beszel 暫時讀不到':'Beszel 未提供此指標';
+ return t(!b?'beszel.unconfigured':b.status==='stale'?'beszel.stale':b.status==='unavailable'?'beszel.unavailable':'beszel.missing');
 }
 function hostSummary(host:HostView){
  const s=host.snapshot!;
  if(externalResources(s)){
-  const b=host.beszel;if(b?.status!=='ok')return '資源無資料 · '+beszelReason(host);
+  const b=host.beszel;if(b?.status!=='ok')return t('summary.noResources',{reason:beszelReason(host)});
   const disk=b.disks.find(d=>d.mount==='/'),gpu=b.gpus?.[0];
-  return `Beszel · CPU ${percent(b.cpuBusy)} · 記憶體可用 ${bytes(b.memory?.available)} · 磁碟 ${disk?disk.percent+'%':'無資料'}`+(gpu?` · GPU ${percent(gpu.busy)}`:'')+(b.cpuBusy===undefined||!b.memory||!disk?' · Beszel 未提供此指標':'');
+  return t('summary.beszel',{cpu:percent(b.cpuBusy),memory:bytes(b.memory?.available),disk:disk?disk.percent+'%':t('nodata')})+(gpu?` · GPU ${percent(gpu.busy)}`:'')+(b.cpuBusy===undefined||!b.memory||!disk?' · '+t('beszel.missing'):'');
  }
- if(s.agentless)return '僅 ssh 基本資訊';
- if(isAndroid(s)){const b=s.android?.battery;return b?`電池 ${b.level}% · ${celsius(b.temperature)}`:'電池資料無法確認';}
- return `CPU ${percent(s.hardware.cpuBusy)} · 記憶體可用 ${bytes(s.memory?.available)}`;
+ if(s.agentless)return t('summary.agentless');
+ if(isAndroid(s)){const b=s.android?.battery;return b?t('summary.battery',{level:b.level,temperature:celsius(b.temperature)}):t('summary.batteryUnknown');}
+ return t('summary.local',{cpu:percent(s.hardware.cpuBusy),memory:bytes(s.memory?.available)});
 }
-function age(value:string|undefined){if(!value||!Number.isFinite(Date.parse(value)))return '無法確認';const seconds=Math.max(0,Math.floor((Date.parse(fleet?.serverTime??'')-Date.parse(value))/1000));return seconds<60?seconds+' 秒前':seconds<3600?Math.floor(seconds/60)+' 分鐘前':seconds<86400?Math.floor(seconds/3600)+' 小時前':Math.floor(seconds/86400)+' 天前';}
+function age(value:string|undefined){if(!value||!Number.isFinite(Date.parse(value)))return t('unknown');const seconds=Math.max(0,Math.floor((Date.parse(fleet?.serverTime??'')-Date.parse(value))/1000));return seconds<60?t('age.seconds',{n:seconds}):seconds<3600?t('age.minutes',{n:Math.floor(seconds/60)}):seconds<86400?t('age.hours',{n:Math.floor(seconds/3600)}):t('age.days',{n:Math.floor(seconds/86400)});}
 function sessionSummary(host:HostView){
  const inventory=host.snapshot?.agentSessions;
- if(inventory?.status==='disabled')return 'Agents 未啟用';
- if(inventory?.status!=='ok')return 'Agents 無法確認';
+ if(inventory?.status==='disabled')return t('sessions.disabled');
+ if(inventory?.status!=='ok')return t('sessions.unknown');
  const sessions=inventory.sessions,working=sessions.filter(s=>s.phase==='working').length,waiting=sessions.filter(s=>['waiting','idle'].includes(s.phase)).length,needsInput=sessions.filter(s=>s.phase==='needs_input').length,unknown=sessions.length-working-waiting-needsInput;
- return (host.status!=='online'||host.stale?'最後已知 ':'')+`Agents ${sessions.length} · 工作 ${working} · 等待 / 待命 ${waiting}`+(needsInput?` · 需輸入 ${needsInput}`:'')+(unknown?` · 未知 ${unknown}`:'');
+ return (host.status!=='online'||host.stale?t('sessions.lastKnown')+' ':'')+t('sessions.summary',{total:sessions.length,working,waiting})+(needsInput?' · '+t('sessions.needsInput',{n:needsInput}):'')+(unknown?' · '+t('sessions.unknownCount',{n:unknown}):'');
 }
-const phaseLabel:Record<string,string>={working:'工作中 · working',waiting:'等待 · waiting',idle:'待命 · idle',needs_input:'需要輸入 · needs_input',unknown:'無法確認'};
+const phaseKnown=(phase:string)=>['working','waiting','idle','needs_input'].includes(phase);
+const phaseLabel=(phase:string)=>phaseKnown(phase)?t(('phase.'+phase) as Key):t('unknown');
 const phaseRank:Record<string,number>={working:0,needs_input:1,waiting:2,idle:3,unknown:4};
 function roleTone(label:string|undefined,role:string|undefined){
  const value=(label||role||'other').trim().toLowerCase();
@@ -82,7 +89,7 @@ function roleTone(label:string|undefined,role:string|undefined){
 }
 const agentLabels:Record<string,string>={claude:'Claude',codex:'Codex',dsh:'DSH'};
 function agentMark(name:string){
- const kind=name.toLowerCase(),label=agentLabels[kind]??(name.trim()||'Unknown agent'),mark=el('span',undefined,'agent-mark '+(agentLabels[kind]?'agent-'+kind:'agent-other'));
+ const kind=name.toLowerCase(),label=agentLabels[kind]??(name.trim()||t('session.agentUnknown')),mark=el('span',undefined,'agent-mark '+(agentLabels[kind]?'agent-'+kind:'agent-other'));
  mark.setAttribute('role','img');mark.setAttribute('aria-label',label);mark.title=label;
  if(kind==='claude')mark.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>';
  else if(kind==='dsh')mark.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.0 15.2 C1.9 12.0 4.6 8.2 9.6 7.6 C14.4 7.0 17.7 9.2 19.0 12.0 C19.2 12.5 19.2 13.1 18.9 13.6 C17.3 16.0 14.3 17.3 10.8 17.3 C7.6 17.3 4.7 16.6 3.3 15.6 C3.1 15.5 3.0 15.4 3.0 15.2 Z"/><path d="M18.4 12.6 C19.7 11.4 20.7 10.0 21.4 8.5 C21.6 8.0 22.4 8.2 22.3 8.8 C22.1 10.6 21.6 12.2 20.9 13.3 C21.6 14.2 22.1 15.2 22.4 16.3 C22.5 16.9 21.7 17.2 21.4 16.7 C20.6 15.3 19.6 14.2 18.3 13.3 Z"/><path d="M8.4 6.0 C8.2 4.8 8.8 3.8 9.8 3.2 C10.2 3.0 10.6 3.5 10.3 3.9 C9.7 4.6 9.4 5.4 9.5 6.2 C9.5 6.7 8.5 6.7 8.4 6.0 Z"/></svg>';
@@ -93,7 +100,7 @@ function agentMark(name:string){
 const sessionDisclosure=new Map<string,boolean>(),sessionDefaults=new Map<string,boolean>();
 function updateSessionToggle(host:string){
  const expanded=[...$('agent-sessions').querySelectorAll<HTMLDetailsElement>('details')].every(d=>d.open);
- const button=$('toggle-session-details');button.textContent=expanded?'全部收合':'全部展開';
+ const button=$('toggle-session-details');button.textContent=t(expanded?'sessions.collapseAll':'sessions.expandAll');
  button.onclick=()=>{
   const open=!expanded;sessionDefaults.set(host,open);
   for(const row of $('agent-sessions').querySelectorAll<HTMLElement>('.agent-session')){
@@ -105,23 +112,23 @@ function updateSessionToggle(host:string){
 }
 function renderSessions(host:HostView){
  const panel=$('agent-sessions');panel.replaceChildren();$('toggle-session-details').hidden=true;const sessionFilters=$('agent-session-filters');sessionFilters.replaceChildren();sessionFilters.hidden=true;const inventory=host.snapshot?.agentSessions;
- if(inventory?.status==='disabled'){panel.append(el('p','此主機未啟用 agent session 採集','session-note'));return;}
- if(inventory?.status!=='ok'){panel.append(el('p','Agent sessions 無法確認；尚未取得可用的本機清單','session-note'));return;}
+ if(inventory?.status==='disabled'){panel.append(el('p',t('sessions.disabledNote'),'session-note'));return;}
+ if(inventory?.status!=='ok'){panel.append(el('p',t('sessions.unknownNote'),'session-note'));return;}
  const retained=host.status!=='online'||host.stale;
- panel.append(el('p',sessionSummary(host)+(retained?' · 連線或資料已過期，以下是最後已知清單':''),'session-note'));
- const sessionFilter=selectedFilter('agents');drawFilterTabs('agent-session-filters','Agent session filters',[{id:'all',label:'All',count:inventory.sessions.length},{id:'working',label:'Working',count:inventory.sessions.filter(session=>session.phase==='working').length},{id:'waiting',label:'Waiting / idle',count:inventory.sessions.filter(session=>['waiting','idle'].includes(session.phase)).length}],sessionFilter,id=>{sectionFilter.set('agents',id);renderSessions(host);},true);
- if(!inventory.sessions.length){panel.append(el('p',retained?'最後已知清單沒有執行中的 agent；目前無法確認':'目前沒有執行中的 agent','session-note'));return;}
+ panel.append(el('p',sessionSummary(host)+(retained?' · '+t('sessions.retained'):''),'session-note'));
+ const sessionFilter=selectedFilter('agents');drawFilterTabs('agent-session-filters',t('filters.sessions'),[{id:'all',label:t('filter.all'),count:inventory.sessions.length},{id:'working',label:t('filter.working'),count:inventory.sessions.filter(session=>session.phase==='working').length},{id:'waiting',label:t('filter.waiting'),count:inventory.sessions.filter(session=>['waiting','idle'].includes(session.phase)).length}],sessionFilter,id=>{sectionFilter.set('agents',id);renderSessions(host);},true);
+ if(!inventory.sessions.length){panel.append(el('p',t(retained?'sessions.emptyRetained':'sessions.empty'),'session-note'));return;}
  const sorted=[...inventory.sessions].sort((a,b)=>(phaseRank[a.phase]??4)-(phaseRank[b.phase]??4)||(Date.parse(b.lastActivityAt??'')||0)-(Date.parse(a.lastActivityAt??'')||0)||(a.title??'').localeCompare(b.title??''));
  for(const session of sorted){
-  const row=el('article',undefined,'agent-session'),header=el('div',undefined,'session-header'),phase=el('span',(retained?'最後已知 · ':'')+(phaseLabel[session.phase]??phaseLabel.unknown),'session-phase phase-'+(retained?'stale':session.phase in phaseLabel?session.phase:'unknown'));
+  const row=el('article',undefined,'agent-session'),header=el('div',undefined,'session-header'),phase=el('span',(retained?t('sessions.lastKnown')+' · ':'')+phaseLabel(session.phase),'session-phase phase-'+(retained?'stale':phaseKnown(session.phase)?session.phase:'unknown'));
   row.dataset.sessionKey=JSON.stringify([host.name,session.agent,session.createdAt??'',session.title??'',session.repoName??'']);
   header.append(phase);
-  if(session.label||session.role){const label=session.label||session.role||'Other',badge=el('span',label,'session-role role-'+roleTone(session.label,session.role));badge.title=label;header.append(badge);}
- header.append(agentMark(session.agent));row.dataset.phase=session.phase;row.hidden=sessionFilter==='working'?session.phase!=='working':sessionFilter==='waiting'?!['waiting','idle'].includes(session.phase):false;row.append(header,el('div',session.title??'未命名 session','session-title'),el('div',session.repoName??'Repo 無法確認','session-repo'),el('div','活動 '+age(session.lastActivityAt),'session-activity'));
-  const details=el('details',undefined,'session-extra') as HTMLDetailsElement,summary=el('summary','更多資訊'),detailRows=el('div',undefined,'session-details');
-  for(const value of [`建立 ${age(session.createdAt)}`,`帳號 ${session.account??'無法確認'}${session.accountState?' · '+session.accountState:''}`,`未讀 ${session.unreadMessageCount??'無法確認'}`])detailRows.append(el('span',value));
-  if(session.selectedAccount&&session.selectedAccount!==session.account)detailRows.append(el('span','選定帳號 '+session.selectedAccount));
-  const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?'lineage depth '+session.lineageDepth:'',session.resumable!==undefined?'resumable '+session.resumable:'',session.updatedAt?'更新 '+age(session.updatedAt):''].filter(Boolean);
+  if(session.label||session.role){const label=session.label||session.role||t('session.roleOther'),badge=el('span',label,'session-role role-'+roleTone(session.label,session.role));badge.title=label;header.append(badge);}
+ header.append(agentMark(session.agent));row.dataset.phase=session.phase;row.hidden=sessionFilter==='working'?session.phase!=='working':sessionFilter==='waiting'?!['waiting','idle'].includes(session.phase):false;row.append(header,el('div',session.title??t('session.untitled'),'session-title'),el('div',session.repoName??t('session.repoUnknown'),'session-repo'),el('div',t('session.activity',{age:age(session.lastActivityAt)}),'session-activity'));
+  const details=el('details',undefined,'session-extra') as HTMLDetailsElement,summary=el('summary',t('session.more')),detailRows=el('div',undefined,'session-details');
+  for(const value of [t('session.created',{age:age(session.createdAt)}),t('session.account',{account:session.account??t('unknown')})+(session.accountState?' · '+session.accountState:''),t('session.unread',{n:session.unreadMessageCount??t('unknown')})])detailRows.append(el('span',value));
+  if(session.selectedAccount&&session.selectedAccount!==session.account)detailRows.append(el('span',t('session.selectedAccount',{account:session.selectedAccount})));
+  const metadata=[session.role,session.mode,session.coordinationMode,session.lineageDepth!==undefined?t('session.lineage',{n:session.lineageDepth}):'',session.resumable!==undefined?t('session.resumable',{value:t(session.resumable?'yes':'no')}):'',session.updatedAt?t('session.updated',{age:age(session.updatedAt)}):''].filter(Boolean);
   details.open=sessionDisclosure.get(row.dataset.sessionKey)??sessionDefaults.get(host.name)??true;
   // Initialization and bulk changes already match the retained state. Their queued native
   // toggle events must not rescan the whole list; only a changed user choice needs an update.
@@ -137,34 +144,34 @@ function closeLog(){logRequest++;openedLog=undefined;$('log-panel').hidden=true;
 async function openLog(host:string,unit:string){
  const request=++logRequest;openedLog={host,unit};$('log-panel').hidden=false;$('log-title').textContent=unit;
  ($('log-refresh') as HTMLButtonElement).disabled=true;
- $('log-body').textContent='讀取最近 120 行日誌中…';
+ $('log-body').textContent=t('log.loading');
  $('log-panel').scrollIntoView({block:'nearest'});
  try{const params=new URLSearchParams({host,unit}),response=await fetch('/api/logs?'+params,{cache:'no-store'});
   if(!response.ok)throw Error();const data=await response.json() as {text:string};
-  if(request===logRequest)$('log-body').textContent=data.text||'目前沒有日誌';
- }catch{if(request===logRequest)$('log-body').textContent='日誌目前無法讀取，請稍後重試。';}
+  if(request===logRequest)$('log-body').textContent=data.text||t('log.empty');
+ }catch{if(request===logRequest)$('log-body').textContent=t('log.error');}
  finally{if(request===logRequest)($('log-refresh') as HTMLButtonElement).disabled=false;}
 }
 function serviceCategory(health:string){return health==='error'||health==='unhealthy'?'attention':health==='ok'||health==='healthy'?'healthy':health==='idle'||health==='inactive'?'inactive':'unknown';}
 function rows(){if(!fleet)return;const host=fleet.hosts.find(h=>h.name===selected),s=host?.snapshot;if(!s)return;const query=input('search').value.trim().toLowerCase(),filter=input('filter').value;
- const units:Row[]=s.services.map(u=>({...u,source:u.manager==='termux'?'Termux':u.manager==='android'?'Android app':u.manager==='launchd'?(u.scope==='user'?'launchd agent':'launchd daemon'):u.scope==='user'?'使用者 service':'系統 service',details:[u.installed,u.type,u.active,u.sub,u.result&&u.result!=='success'?u.result:''].filter(Boolean).join(' · ')}));
+ const units:Row[]=s.services.map(u=>({...u,source:u.manager==='termux'?'Termux':u.manager==='android'?'Android app':u.manager==='launchd'?(u.scope==='user'?'launchd agent':'launchd daemon'):u.scope==='user'?t('services.userService'):t('services.systemService'),details:[u.installed,u.type,u.active,u.sub,u.result&&u.result!=='success'?u.result:''].filter(Boolean).join(' · ')}));
  for(const c of s.containers??[])units.push({...c,source:'Docker',description:c.image,health:c.health==='unhealthy'||['restarting','dead'].includes(c.state??'')?'error':c.state==='running'?(c.health==='healthy'?'ok':'unknown'):'inactive',details:c.status,required:true});
  const counts={attention:0,healthy:0,inactive:0,unknown:0};for(const unit of units)counts[serviceCategory(unit.health)]++;
- let serviceFilter=selectedFilter('services');if(serviceFilter!=='all'&&!counts[serviceFilter as keyof typeof counts]){serviceFilter='all';sectionFilter.set('services','all');}drawFilterTabs('service-filters','Service health filters',[{id:'all',label:'All',count:units.length},{id:'attention',label:'Needs attention',count:counts.attention},{id:'healthy',label:'Healthy',count:counts.healthy},{id:'inactive',label:'Inactive',count:counts.inactive},{id:'unknown',label:'Unknown',count:counts.unknown}],serviceFilter,id=>{sectionFilter.set('services',id);rows();});
+ let serviceFilter=selectedFilter('services');if(serviceFilter!=='all'&&!counts[serviceFilter as keyof typeof counts]){serviceFilter='all';sectionFilter.set('services','all');}drawFilterTabs('service-filters',t('filters.services'),[{id:'all',label:t('filter.all'),count:units.length},{id:'attention',label:t('filter.attention'),count:counts.attention},{id:'healthy',label:t('filter.healthy'),count:counts.healthy},{id:'inactive',label:t('filter.inactive'),count:counts.inactive},{id:'unknown',label:t('filter.unknown'),count:counts.unknown}],serviceFilter,id=>{sectionFilter.set('services',id);rows();});
  const list=units.filter(u=>(serviceFilter==='all'||serviceCategory(u.health)===serviceFilter)&&(!query||(u.name+' '+(u.description??'')).toLowerCase().includes(query))&&(filter==='all'||filter==='important'&&important(u,host?.importantServices)||filter==='attention'&&u.health==='error'||filter==='running'&&(u.active==='active'||u.state==='running'))).sort((a,b)=>(a.health==='error'?-1:0)-(b.health==='error'?-1:0)||a.name.localeCompare(b.name));
  const tbody=$('services');tbody.replaceChildren();for(const u of list){const tr=el('tr'),name=el('td',u.name);name.append(el('small',u.description));
   if(host?.status==='online'&&!host.stale&&s.platform==='linux'&&host.logUnits?.some(v=>v.name===u.name&&v.scope===u.scope)){
-   const button=el('button','查看日誌','log-link');button.setAttribute('type','button');button.setAttribute('aria-label',`查看 ${u.name} 日誌`);
+   const button=el('button',t('log.view'),'log-link');button.setAttribute('type','button');button.setAttribute('aria-label',t('log.viewLabel',{name:u.name}));
    button.addEventListener('click',()=>void openLog(host.name,u.name));name.append(button);
   }
-  const state=el('td');state.append(pill(healthLabel[u.health]||'無法確認',u.health));if(u.health==='unknown'&&u.state==='running')state.append(el('small','執行中 · 未設定健康檢查'));tr.append(name,state,el('td',u.source),el('td',u.details));tbody.append(tr);}$('empty').hidden=list.length>0;$('service-count').textContent=`已安裝 ${s.services.length} 個 service · ${s.containers?.length??0} 個容器 · 顯示 ${list.length} 項`;
+  const state=el('td');state.append(pill(healthLabel(u.health),u.health));if(u.health==='unknown'&&u.state==='running')state.append(el('small',t('services.runningNoHealth')));tr.append(name,state,el('td',u.source),el('td',u.details));tbody.append(tr);}$('empty').hidden=list.length>0;$('service-count').textContent=t('services.count',{services:s.services.length,containers:s.containers?.length??0,shown:list.length});
 }
 // The default order comes from the server; a viewer's order is saved in this browser only. Storage can be unavailable.
 const hostOrder=(defaults:string[])=>loadOrder(storage(),defaults);
 const slots=()=>[...$('hosts').children] as HTMLElement[];
 const currentOrder=()=>slots().map(n=>n.dataset.host as string);
 function reorder(defaults:string[],order:string[]){const complete=mergeVisibleOrder(hostOrder(defaults),order);if(complete.join()===defaults.join())clearOrder(storage());else saveOrder(storage(),complete);render();}
-const tabLabels:Record<string,string>={disks:'磁碟容量',checks:'功能檢查與最近錯誤',events:'最近事件',agents:'工作階段',services:'服務'};
+const tabLabels:Record<string,Key>={disks:'tab.disks',checks:'tab.checks',events:'tab.events',agents:'tab.agents',services:'tab.services'};
 const tabPanels:Record<string,string>={disks:'disk-panel',checks:'checks-panel',events:'events-panel',agents:'agents-panel',services:'services-panel'};
 function visibleTabs(host:HostView){
  const snapshot=host.snapshot,ids=['events'];
@@ -177,7 +184,7 @@ function visibleTabs(host:HostView){
 function saveTabs(){saveTabState(storage(),{order:tabState.order,selected:preferredTab});}
 function renderTabs(host:HostView){
  const focusedTab=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('#host-tabs [role=tab]')?.dataset.tab,visible=visibleTabs(host),ordered=tabState.order.filter(id=>visible.includes(id)),active=visible.includes(preferredTab)?preferredTab:ordered[0]??'agents',root=$('host-tabs');root.replaceChildren();
- for(const id of ordered){const tab=el('button',tabLabels[id],'host-tab') as HTMLButtonElement;tab.id='tab-'+id;tab.type='button';tab.setAttribute('role','tab');tab.setAttribute('aria-controls',tabPanels[id]);tab.setAttribute('aria-selected',String(id===active));tab.tabIndex=id===active?0:-1;tab.draggable=true;tab.dataset.tab=id;
+ for(const id of ordered){const tab=el('button',t(tabLabels[id]),'host-tab') as HTMLButtonElement;tab.id='tab-'+id;tab.type='button';tab.setAttribute('role','tab');tab.setAttribute('aria-controls',tabPanels[id]);tab.setAttribute('aria-selected',String(id===active));tab.tabIndex=id===active?0:-1;tab.draggable=true;tab.dataset.tab=id;
   tab.addEventListener('click',()=>{preferredTab=id;tabState.selected=id;saveTabs();renderTabs(host);($('tab-'+id) as HTMLButtonElement).focus();});
   tab.addEventListener('keydown',event=>{const at=ordered.indexOf(id),next=event.key==='ArrowRight'?at+1:event.key==='ArrowLeft'?at-1:event.key==='Home'?0:event.key==='End'?ordered.length-1:-1;if(next<0)return;event.preventDefault();const target=ordered[(next+ordered.length)%ordered.length];preferredTab=target;tabState.selected=target;saveTabs();renderTabs(host);($('tab-'+target) as HTMLButtonElement).focus();});
   tab.addEventListener('dragstart',event=>{draggedTab=id;event.dataTransfer?.setData('text/plain',id);if(event.dataTransfer)event.dataTransfer.effectAllowed='move';});
@@ -194,38 +201,39 @@ function moveSelectedTab(delta:number){const host=fleet?.hosts.find(item=>item.n
 function renderFleetFilters(hosts:HostView[]){
  const category=(host:HostView):'normal'|'attention'|'offline'=>host.status!=='online'||host.stale?'offline':host.snapshot?.attention.length?'attention':'normal',counts={normal:0,attention:0,offline:0};for(const host of hosts)counts[category(host)]++;
  if(!counts[fleetFilter as keyof typeof counts])fleetFilter='all';
- drawFilterTabs('host-filters','Fleet status filters',[{id:'all',label:'All',count:hosts.length},{id:'normal',label:'正常',count:counts.normal},{id:'attention',label:'需要關注',count:counts.attention},{id:'offline',label:'離線 / 過期',count:counts.offline}],fleetFilter,id=>{fleetFilter=id;render();});
+ drawFilterTabs('host-filters',t('filters.fleet'),[{id:'all',label:t('filter.all'),count:hosts.length},{id:'normal',label:t('status.normal'),count:counts.normal},{id:'attention',label:t('status.attention'),count:counts.attention},{id:'offline',label:t('status.offline'),count:counts.offline}],fleetFilter,id=>{fleetFilter=id;render();});
 }
-const eventLabel:Record<string,string>={attention:'需要關注',recovered:'已恢復',offline:'無法連線',online:'恢復連線'};
+const eventKey:Record<string,Key>={attention:'events.attention',recovered:'events.recovered',offline:'events.offline',online:'events.online'};
+const eventLabel=(type:string)=>type in eventKey?t(eventKey[type]):type;
 function renderEvents(host:string){
  const list=events.filter(event=>event.host===host).slice(0,20),types=[...new Set(list.map(event=>event.type))];let selected=selectedFilter('events');if(selected!=='all'&&!types.includes(selected)){selected='all';sectionFilter.set('events','all');}
- drawFilterTabs('events-filters','Event type filters',[{id:'all',label:'All',count:list.length},...types.map(type=>({id:type,label:eventLabel[type]??type,count:list.filter(event=>event.type===type).length}))],selected,id=>{sectionFilter.set('events',id);renderEvents(host);});
- $('events').replaceChildren();for(const event of list){if(selected!=='all'&&event.type!==selected)continue;const div=el('div',undefined,'event'),main=el('div',event.title,'event-main'),at=el('time',new Date(event.at).toLocaleString('zh-TW',{hour12:false}));at.setAttribute('datetime',event.at);main.append(el('small',event.kind+(event.detail?' · '+event.detail:'')));div.append(pill(eventLabel[event.type]||event.type,event.type==='attention'?(event.severity==='error'?'error':'warning'):event.type==='offline'?'error':'ok'),main,at);$('events').append(div);}if(!$('events').children.length)$('events').append(el('div','目前沒有符合篩選條件的紀錄','event-empty'));
+ drawFilterTabs('events-filters',t('filters.events'),[{id:'all',label:t('filter.all'),count:list.length},...types.map(type=>({id:type,label:eventLabel(type),count:list.filter(event=>event.type===type).length}))],selected,id=>{sectionFilter.set('events',id);renderEvents(host);});
+ $('events').replaceChildren();for(const event of list){if(selected!=='all'&&event.type!==selected)continue;const div=el('div',undefined,'event'),main=el('div',event.title,'event-main'),at=el('time',new Date(event.at).toLocaleString(timeLocale(language),{hour12:false}));at.setAttribute('datetime',event.at);main.append(el('small',event.kind+(event.detail?' · '+event.detail:'')));div.append(pill(eventLabel(event.type),event.type==='attention'?(event.severity==='error'?'error':'warning'):event.type==='offline'?'error':'ok'),main,at);$('events').append(div);}if(!$('events').children.length)$('events').append(el('div',t('events.none'),'event-empty'));
 }
 function renderChecks(snapshot:Snapshot){
  const rows:{node:HTMLElement;category:string}[]=[];$('checks').replaceChildren();
- for(const job of snapshot.jobs?.items??[]){const node=el('div',job.id,'check'),healthy=job.status==='healthy',category=healthy?'passed':'attention';node.append(pill(healthy?'正常':job.status==='unknown'?'無法確認':'需要關注',healthy?'ok':job.status==='unknown'?'warning':'error'),el('small',`${job.label} · ${job.outcome??'unknown'} · ${job.reasonCode}`),el('small',`最近成功 ${time(job.lastSuccess??undefined)} · 下次 ${time(job.nextDue??undefined)} · snapshot ${job.ageSeconds===undefined?'unknown':Math.round(job.ageSeconds)+'s'} · retry ${job.retryCount??0}/${job.retryBudget??0}`),el('small',`Registry ${job.registryRevision.slice(0,12)} · source ${job.sourceRevision?.slice(0,12)??'unknown'} · runtime ${job.runtimeRevision?.slice(7,19)??'unknown'}`));if(job.lastFailure)node.append(el('small',`最近失敗 ${job.lastFailure.outcome} · ${job.lastFailure.reasonCode} · ${time(job.lastFailure.at)}`));rows.push({node,category});}
- for(const probe of snapshot.probes??[]){const node=el('div',probe.name,'check'),category=probe.ok?'passed':'attention';node.append(pill(probe.ok?'通過':'異常',probe.ok?'ok':'error'),el('small',probe.status?`HTTP ${probe.status}`:'無法連線'));rows.push({node,category});}
- for(const item of snapshot.journalErrors??[]){const node=el('div',item.unit,'check');node.append(pill(item.count+' 個錯誤','warning'),el('small',`${item.scope}${item.process?' · '+item.process:''} · 最近 ${time(item.lastAt)}`));rows.push({node,category:'attention'});}
- if(!rows.length){const note=el('div',snapshot.platform==='darwin'?'近一小時沒有採集到必要 launchd 工作的 error 紀錄':isAndroid(snapshot)?'Android 裝置透過 adb 採集，不讀取系統記錄':'近一小時沒有採集到 error 等級的 journal 紀錄','check');$('checks').append(note);drawFilterTabs('checks-filters','Check status filters',[],'all',()=>{});return;}
- const passed=rows.filter(row=>row.category==='passed').length,attention=rows.length-passed;let selected=selectedFilter('checks');if(selected!=='all'&&(selected==='passed'?!passed:!attention)){selected='all';sectionFilter.set('checks','all');}drawFilterTabs('checks-filters','Check status filters',[{id:'all',label:'All',count:rows.length},{id:'passed',label:'Passed',count:passed},{id:'attention',label:'Needs attention',count:attention}],selected,id=>{sectionFilter.set('checks',id);renderChecks(snapshot);});
+ for(const job of snapshot.jobs?.items??[]){const node=el('div',job.id,'check'),healthy=job.status==='healthy',category=healthy?'passed':'attention';node.append(pill(t(healthy?'health.ok':job.status==='unknown'?'unknown':'status.attention'),healthy?'ok':job.status==='unknown'?'warning':'error'),el('small',t('check.job',{label:job.label,outcome:job.outcome??t('unknown'),reason:job.reasonCode})),el('small',t('check.jobTiming',{last:time(job.lastSuccess??undefined),next:time(job.nextDue??undefined),age:job.ageSeconds===undefined?t('unknown'):Math.round(job.ageSeconds)+'s',retry:job.retryCount??0,budget:job.retryBudget??0})),el('small',t('check.jobRevisions',{registry:job.registryRevision.slice(0,12),source:job.sourceRevision?.slice(0,12)??t('unknown'),runtime:job.runtimeRevision?.slice(7,19)??t('unknown')})));if(job.lastFailure)node.append(el('small',t('check.jobFailure',{outcome:job.lastFailure.outcome,reason:job.lastFailure.reasonCode,time:time(job.lastFailure.at)})));rows.push({node,category});}
+ for(const probe of snapshot.probes??[]){const node=el('div',probe.name,'check'),category=probe.ok?'passed':'attention';node.append(pill(t(probe.ok?'check.probePassed':'check.probeFailed'),probe.ok?'ok':'error'),el('small',probe.status?`HTTP ${probe.status}`:t('check.unreachable')));rows.push({node,category});}
+ for(const item of snapshot.journalErrors??[]){const node=el('div',item.unit,'check');node.append(pill(t('check.journalCount',{n:item.count}),'warning'),el('small',`${item.scope}${item.process?' · '+item.process:''} · ${t('check.journalLast',{time:time(item.lastAt)})}`));rows.push({node,category:'attention'});}
+ if(!rows.length){const note=el('div',t(snapshot.platform==='darwin'?'check.emptyDarwin':isAndroid(snapshot)?'check.emptyAndroid':'check.emptyLinux'),'check');$('checks').append(note);drawFilterTabs('checks-filters',t('filters.checks'),[],'all',()=>{});return;}
+ const passed=rows.filter(row=>row.category==='passed').length,attention=rows.length-passed;let selected=selectedFilter('checks');if(selected!=='all'&&(selected==='passed'?!passed:!attention)){selected='all';sectionFilter.set('checks','all');}drawFilterTabs('checks-filters',t('filters.checks'),[{id:'all',label:t('filter.all'),count:rows.length},{id:'passed',label:t('filter.passed'),count:passed},{id:'attention',label:t('filter.attention'),count:attention}],selected,id=>{sectionFilter.set('checks',id);renderChecks(snapshot);});
  for(const row of rows)if(selected==='all'||row.category===selected)$('checks').append(row.node);
 }
 function renderDisks(host:HostView,snapshot:Snapshot){
  const root=$('disks');root.replaceChildren();const disks=externalResources(snapshot)?(host.beszel?.status==='ok'?host.beszel.disks:[])??[]:snapshot.disks??[];
- if(snapshot.agentless&&!externalResources(snapshot)){root.append(el('div','僅 ssh 基本資訊：不採集磁碟容量','check'));drawFilterTabs('disk-filters','Disk capacity filters',[],'all',()=>{});return;}
+ if(snapshot.agentless&&!externalResources(snapshot)){root.append(el('div',t('disks.agentless'),'check'));drawFilterTabs('disk-filters',t('filters.disks'),[],'all',()=>{});return;}
  if(externalResources(snapshot)){
-  const note=el('div',host.beszel?.status==='ok'?'磁碟容量來自 Beszel':'磁碟無資料 · '+beszelReason(host),'check');
-  if(host.beszel?.recordedAt)note.append(el('small',`Beszel 資料時間 ${time(host.beszel.recordedAt)} · ${age(host.beszel.recordedAt)}`));root.append(note);
+  const note=el('div',host.beszel?.status==='ok'?t('disks.fromBeszel'):t('disks.noData',{reason:beszelReason(host)}),'check');
+  if(host.beszel?.recordedAt)note.append(el('small',t('disks.beszelTime',{time:time(host.beszel.recordedAt),age:age(host.beszel.recordedAt)})));root.append(note);
  }
- if(!disks.length){if(!root.children.length)root.append(el('div','目前沒有磁碟容量資料','check'));drawFilterTabs('disk-filters','Disk capacity filters',[],'all',()=>{});return;}
+ if(!disks.length){if(!root.children.length)root.append(el('div',t('disks.none'),'check'));drawFilterTabs('disk-filters',t('filters.disks'),[],'all',()=>{});return;}
  const state=(value:number):'normal'|'warning'|'critical'=>value>=95?'critical':value>=85?'warning':'normal',counts={normal:0,warning:0,critical:0};for(const disk of disks)counts[state(disk.percent)]++;let selected=selectedFilter('disks');if(selected!=='all'&&!counts[selected as keyof typeof counts]){selected='all';sectionFilter.set('disks','all');}
- drawFilterTabs('disk-filters','Disk capacity filters',[{id:'all',label:'All',count:disks.length},{id:'normal',label:'Normal',count:counts.normal},{id:'warning',label:'Warning',count:counts.warning},{id:'critical',label:'Critical',count:counts.critical}],selected,id=>{sectionFilter.set('disks',id);renderDisks(host,snapshot);});
- for(const disk of disks){if(selected!=='all'&&state(disk.percent)!==selected)continue;const row=el('div',undefined,'disk'),name=el('div',disk.mount);name.append(el('small',[disk.source,disk.type].filter(Boolean).join(' · ')));const usage=el('div',disk.percent+'%');usage.append(bar(disk.percent));const remaining=el('div',`可用 ${bytes(disk.available)}`,'disk-space');remaining.append(el('small',`使用 ${bytes(disk.used)} / ${bytes(disk.total)}`));row.append(name,usage,remaining);root.append(row);}
+ drawFilterTabs('disk-filters',t('filters.disks'),[{id:'all',label:t('filter.all'),count:disks.length},{id:'normal',label:t('filter.normal'),count:counts.normal},{id:'warning',label:t('filter.warning'),count:counts.warning},{id:'critical',label:t('filter.critical'),count:counts.critical}],selected,id=>{sectionFilter.set('disks',id);renderDisks(host,snapshot);});
+ for(const disk of disks){if(selected!=='all'&&state(disk.percent)!==selected)continue;const row=el('div',undefined,'disk'),name=el('div',disk.mount);name.append(el('small',[disk.source,disk.type].filter(Boolean).join(' · ')));const usage=el('div',disk.percent+'%');usage.append(bar(disk.percent));const remaining=el('div',t('disk.available',{size:bytes(disk.available)}),'disk-space');remaining.append(el('small',t('disk.used',{used:bytes(disk.used),total:bytes(disk.total)})));row.append(name,usage,remaining);root.append(row);}
 }
 // Each card has a grip: drag it with a mouse or finger, or focus it and press an arrow key to move the card one place.
 function grip(name:string,defaults:string[]){
- const handle=el('button','⋮⋮','host-grip');handle.setAttribute('type','button');handle.setAttribute('aria-label',`移動 ${name} 卡片（拖曳，或用方向鍵）`);handle.title='拖曳以調整順序';
+ const handle=el('button','⋮⋮','host-grip');handle.setAttribute('type','button');handle.setAttribute('aria-label',t('host.gripLabel',{name}));handle.title=t('host.gripTitle');
  handle.addEventListener('keydown',e=>{const delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:['ArrowRight','ArrowDown'].includes(e.key)?1:0;if(!delta)return;e.preventDefault();
   const order=currentOrder();reorder(defaults,moveHost(order,name,order.indexOf(name)+delta));($('hosts').querySelector(`[data-host="${CSS.escape(name)}"] .host-grip`) as HTMLElement|null)?.focus();});
  handle.addEventListener('pointerdown',e=>{if(e.button!==0&&e.pointerType==='mouse')return;e.preventDefault();dragging=true;
@@ -249,48 +257,63 @@ function render(){
   const slot=el('div',undefined,'host-slot');slot.dataset.host=host.name;
   const good=host.status==='online'&&!host.stale,tone=!good?'warning':host.snapshot?.attention.some(item=>item.severity==='error')?'error':host.snapshot?.attention.length?'warning':'ok';
   const button=el('button',undefined,'host tone-'+tone+(host.name===selected?' selected':''));button.setAttribute('aria-pressed',String(host.name===selected));
-  const top=el('div',undefined,'host-top');top.append(el('span',host.name,'host-name'),pill(host.status==='loading'?'讀取中':!good?'離線 / 資料過期':host.snapshot?.attention.length?'需要關注':'正常',tone));
-  button.append(top,el('div',host.snapshot?hostSummary(host):'等待主機回應','host-detail'),el('div',host.reachability?`最後看到 ${time(host.reachability.lastSeen)} · 下次檢查 ${time(host.reachability.nextCheck)}`:`最近成功更新 ${time(host.lastSuccess)}`,'host-detail'));
+  const top=el('div',undefined,'host-top');top.append(el('span',host.name,'host-name'),pill(t(host.status==='loading'?'host.loading':!good?'host.offline':host.snapshot?.attention.length?'status.attention':'status.normal'),tone));
+  button.append(top,el('div',host.snapshot?hostSummary(host):t('host.waiting'),'host-detail'),el('div',host.reachability?t('host.reach',{seen:time(host.reachability.lastSeen),next:time(host.reachability.nextCheck)}):t('host.lastSuccess',{time:time(host.lastSuccess)}),'host-detail'));
   button.append(el('div',sessionSummary(host),'host-detail host-agents'));
   button.addEventListener('click',()=>{closeLog();selected=host.name;location.hash=selected;render();});slot.append(button,grip(host.name,defaults));$('hosts').append(slot);
  }
  if(focused)($('hosts').querySelector(`[data-host="${CSS.escape(focused)}"] .host-grip`) as HTMLElement|null)?.focus();
  const host=fleet.hosts.find(item=>item.name===selected);if(!host)return;const snapshot=host.snapshot;
  if(openedLog&&(openedLog.host!==host.name||host.status!=='online'||host.stale))closeLog();
- $('host-title').textContent=host.name;$('connection').textContent=host.status!=='online'||host.stale?(host.reachability?`主機目前無法連線（最後看到 ${time(host.reachability.lastSeen)}，下次檢查 ${time(host.reachability.nextCheck)}）。`:'無法取得即時資料。')+(snapshot?'下方保留最後一次成功的快照，請留意更新時間。':'正在等待 collector 回應。'):'';
- $('updated').textContent=`網頁更新 ${time(fleet.serverTime)} · 每 ${fleet.refreshSeconds} 秒採集`;
- const summary=$('summary');summary.textContent=snapshot?`${snapshot.attention.length} 項需要關注`:'等待資料';summary.className='pill '+(!snapshot?'warning':snapshot.attention.some(item=>item.severity==='error')?'error':snapshot.attention.length?'warning':'ok');
+ $('host-title').textContent=host.name;$('connection').textContent=host.status!=='online'||host.stale?[host.reachability?t('connection.unreachable',{seen:time(host.reachability.lastSeen),next:time(host.reachability.nextCheck)}):t('connection.noLive'),t(snapshot?'connection.keptSnapshot':'connection.waitingCollector')].join(' '):'';
+ $('updated').textContent=t('updated.line',{time:time(fleet.serverTime),seconds:fleet.refreshSeconds});
+ const summary=$('summary');summary.textContent=snapshot?t('summary.attention',{n:snapshot.attention.length}):t('summary.waiting');summary.className='pill '+(!snapshot?'warning':snapshot.attention.some(item=>item.severity==='error')?'error':snapshot.attention.length?'warning':'ok');
  $('attention').replaceChildren();$('resources').replaceChildren();$('disks').replaceChildren();$('checks').replaceChildren();$('services').replaceChildren();renderEvents(host.name);renderSessions(host);
- if(!snapshot){$('attention').append(el('div','等待主機快照','notice warning'));renderTabs(host);return;}
+ if(!snapshot){$('attention').append(el('div',t('attention.waiting'),'notice warning'));renderTabs(host);return;}
  for(const attention of snapshot.attention){const notice=el('div',attention.title,'notice '+attention.severity);if(attention.detail)notice.append(el('span',attention.detail));$('attention').append(notice);}
- if(!snapshot.attention.length)$('attention').append(el('div',host.status==='online'&&!host.stale?'目前沒有偵測到需要處理的異常':'最後一次快照沒有異常；目前連線狀態待確認','notice '+(host.status==='online'&&!host.stale?'ok':'warning')));
+ if(!snapshot.attention.length)$('attention').append(el('div',t(host.status==='online'&&!host.stale?'attention.none':'attention.noneUnconfirmed'),'notice '+(host.status==='online'&&!host.stale?'ok':'warning')));
  function metric(label:string,value:string,detail:string,n?:number){const div=el('div',undefined,'metric');div.append(el('div',label,'metric-label'),el('div',value,'metric-value'));if(n!==undefined)div.append(bar(n));div.append(el('div',detail,'metric-sub'));$('resources').append(div);}
- const uptime=`${Math.floor(snapshot.hardware.uptime/86400)} 天 ${Math.floor(snapshot.hardware.uptime%86400/3600)} 小時`;
+ const uptime=t('uptime.full',{days:Math.floor(snapshot.hardware.uptime/86400),hours:Math.floor(snapshot.hardware.uptime%86400/3600)}),kernelDetail=t('metric.kernelDetail',{count:snapshot.hardware.cpuCount,kernel:snapshot.hardware.kernel});
  if(externalResources(snapshot)){
-  const b=host.beszel,current=b?.status==='ok'?b:undefined,source=current?`Beszel · 資料時間 ${time(b?.recordedAt)} · ${age(b?.recordedAt??undefined)}`:beszelReason(host);
-  metric('CPU 使用率',percent(current?.cpuBusy),current?.cpuBusy!==undefined?source:beszelReason(host),current?.cpuBusy);
+  const b=host.beszel,current=b?.status==='ok'?b:undefined,source=current?t('metric.beszelSource',{time:time(b?.recordedAt),age:age(b?.recordedAt??undefined)}):beszelReason(host);
+  metric(t('metric.cpu'),percent(current?.cpuBusy),current?.cpuBusy!==undefined?source:beszelReason(host),current?.cpuBusy);
   const memory=current?.memory,memoryPercent=memory?memory.used/memory.total*100:undefined;
-  metric('記憶體使用率',percent(memoryPercent),memory?`${source} · 使用 ${bytes(memory.used)} / ${bytes(memory.total)} · 可用 ${bytes(memory.available)}`:beszelReason(host),memoryPercent);
+  metric(t('metric.memory'),percent(memoryPercent),memory?`${source} · ${t('metric.memoryDetail',{used:bytes(memory.used),total:bytes(memory.total),available:bytes(memory.available)})}`:beszelReason(host),memoryPercent);
   const disk=current?.disks.find(d=>d.mount==='/');
-  metric('系統磁碟',disk?disk.percent+'%':'無資料',disk?`${source} · 使用 ${bytes(disk.used)} · 可用 ${bytes(disk.available)}`:beszelReason(host),disk?.percent);
-  if(current?.gpus?.length)for(const gpu of current.gpus)metric('GPU 使用率',percent(gpu.busy),`${source} · ${gpu.name}`,gpu.busy);
-  else metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);
+  metric(t('metric.systemDisk'),disk?disk.percent+'%':t('nodata'),disk?`${source} · ${t('metric.diskDetail',{used:bytes(disk.used),available:bytes(disk.available)})}`:beszelReason(host),disk?.percent);
+  if(current?.gpus?.length)for(const gpu of current.gpus)metric(t('metric.gpu'),percent(gpu.busy),`${source} · ${gpu.name}`,gpu.busy);
+  else metric(t('metric.uptime'),uptime,kernelDetail);
  }
- else if(snapshot.agentless){metric('資源指標','未安裝 collector','僅 ssh 基本資訊：不採集 CPU、記憶體、磁碟與服務');metric('主機運作時間',uptime,`${snapshot.hardware.cpuCount} CPU · 核心 ${snapshot.hardware.kernel}`);} else if(isAndroid(snapshot)){const battery=snapshot.android?.battery,thermal=snapshot.android?.thermal,protection=snapshot.android?.protection,memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined,data=snapshot.disks?.find(disk=>disk.mount==='/data');
-  metric('電池電量',battery?battery.level+'%':'無資料',battery?`健康 ${batteryHealth[battery.health]??battery.health} · ${powerLabel[battery.power]??battery.power} · 電池保護 ${protection==null?'無資料':protection?'開啟':'關閉'}`:'採集無法確認');
-  metric('電池溫度',battery?celsius(battery.temperature):'無資料',thermal?[`熱狀態 ${thermalLabel[thermal.status]??thermal.status}`,...thermal.sensors.map(sensor=>`${sensor.name} ${celsius(sensor.temperature)}`)].join(' · '):'熱感測無法確認');
-  metric('記憶體使用率',percent(memoryPercent),memory?`使用 ${bytes(memory.used)} / ${bytes(memory.total)} · 可用 ${bytes(memory.available)}`:'採集無法確認',memoryPercent);
-  metric('/data 儲存空間',data?data.percent+'%':'無資料',data?`使用 ${bytes(data.used)} · 可用 ${bytes(data.available)}`:'採集無法確認',data?.percent);
+ else if(snapshot.agentless){metric(t('metric.resources'),t('metric.noCollector'),t('metric.agentlessDetail'));metric(t('metric.uptime'),uptime,kernelDetail);} else if(isAndroid(snapshot)){const battery=snapshot.android?.battery,thermal=snapshot.android?.thermal,protection=snapshot.android?.protection,memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined,data=snapshot.disks?.find(disk=>disk.mount==='/data');
+  metric(t('metric.battery'),battery?battery.level+'%':t('nodata'),battery?t('metric.batteryDetail',{health:batteryHealth(battery.health),power:powerLabel(battery.power),protection:protection==null?t('nodata'):t(protection?'metric.protectionOn':'metric.protectionOff')}):t('metric.collectUnknown'));
+  metric(t('metric.batteryTemperature'),battery?celsius(battery.temperature):t('nodata'),thermal?[t('metric.thermalStatus',{status:thermalLabel(thermal.status)}),...thermal.sensors.map(sensor=>`${sensor.name} ${celsius(sensor.temperature)}`)].join(' · '):t('metric.thermalUnknown'));
+  metric(t('metric.memory'),percent(memoryPercent),memory?t('metric.memoryDetail',{used:bytes(memory.used),total:bytes(memory.total),available:bytes(memory.available)}):t('metric.collectUnknown'),memoryPercent);
+  metric(t('metric.dataStorage'),data?data.percent+'%':t('nodata'),data?t('metric.diskDetail',{used:bytes(data.used),available:bytes(data.available)}):t('metric.collectUnknown'),data?.percent);
  }else{
-  metric('CPU 使用率',percent(snapshot.hardware.cpuBusy),`${snapshot.hardware.cpuCount} CPU · Load ${snapshot.hardware.load.map(value=>value.toFixed(2)).join(' / ')}`,snapshot.hardware.cpuBusy);
-  const memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined;metric('記憶體使用率',percent(memoryPercent),memory?`使用 ${bytes(memory.used)} / ${bytes(memory.total)} · 可用 ${bytes(memory.available)}`:'採集無法確認',memoryPercent);
-  const disk=snapshot.disks?.find(item=>item.mount==='/');metric('系統磁碟',disk?disk.percent+'%':'無資料',disk?`使用 ${bytes(disk.used)} · 可用 ${bytes(disk.available)}`:'採集無法確認',disk?.percent);
-  const gpu=snapshot.gpus?.[0];metric(gpu?'GPU 使用率':'主機運作時間',gpu?percent(gpu.busy):Math.floor(snapshot.hardware.uptime/86400)+' 天',gpu?`${gpu.name} · ${gpu.temperature}°C · ${bytes(gpu.memoryUsed)} / ${bytes(gpu.memoryTotal)}`:`${Math.floor(snapshot.hardware.uptime%86400/3600)} 小時 · 核心 ${snapshot.hardware.kernel}`,gpu?.busy);
+  metric(t('metric.cpu'),percent(snapshot.hardware.cpuBusy),t('metric.cpuDetail',{count:snapshot.hardware.cpuCount,load:snapshot.hardware.load.map(value=>value.toFixed(2)).join(' / ')}),snapshot.hardware.cpuBusy);
+  const memory=snapshot.memory,memoryPercent=memory?memory.used/memory.total*100:undefined;metric(t('metric.memory'),percent(memoryPercent),memory?t('metric.memoryDetail',{used:bytes(memory.used),total:bytes(memory.total),available:bytes(memory.available)}):t('metric.collectUnknown'),memoryPercent);
+  const disk=snapshot.disks?.find(item=>item.mount==='/');metric(t('metric.systemDisk'),disk?disk.percent+'%':t('nodata'),disk?t('metric.diskDetail',{used:bytes(disk.used),available:bytes(disk.available)}):t('metric.collectUnknown'),disk?.percent);
+  const gpu=snapshot.gpus?.[0];metric(t(gpu?'metric.gpu':'metric.uptime'),gpu?percent(gpu.busy):t('uptime.days',{days:Math.floor(snapshot.hardware.uptime/86400)}),gpu?`${gpu.name} · ${gpu.temperature}°C · ${bytes(gpu.memoryUsed)} / ${bytes(gpu.memoryTotal)}`:t('uptime.hoursKernel',{hours:Math.floor(snapshot.hardware.uptime%86400/3600),kernel:snapshot.hardware.kernel}),gpu?.busy);
  }
  renderDisks(host,snapshot);renderChecks(snapshot);rows();renderTabs(host);
 }
-async function refresh(){if(fetching||dragging)return;fetching=true;try{const r=await fetch('/api/fleet',{cache:'no-store'});if(!r.ok)throw Error();fleet=await r.json();document.body.dataset.link='ok';if(dragging)return;try{const e=await fetch('/api/events?limit=200',{cache:'no-store'});if(e.ok)events=(await e.json()).events;}catch{}if(!dragging)render();}catch{document.body.dataset.link='down';$('connection').textContent='監控 server 暫時無法連線；目前頁面資料可能已過期。';}finally{fetching=false;}}
-$('refresh').addEventListener('click',refresh);$('reset-order').addEventListener('click',()=>{clearOrder(storage());render();});$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);
+const showLinkDown=()=>{$('connection').textContent=t('connection.serverDown');};
+async function refresh(){if(fetching||dragging)return;fetching=true;try{const r=await fetch('/api/fleet',{cache:'no-store'});if(!r.ok)throw Error();fleet=await r.json();document.body.dataset.link='ok';if(dragging)return;try{const e=await fetch('/api/events?limit=200',{cache:'no-store'});if(e.ok)events=(await e.json()).events;}catch{}if(!dragging)render();}catch{document.body.dataset.link='down';showLinkDown();}finally{fetching=false;}}
+// Static page text carries data-i18n keys; dynamic text is rebuilt by render(), so a switch re-applies both.
+function applyLanguage(){
+ document.documentElement.lang=htmlLang(language);document.title=t('title');
+ for(const node of document.querySelectorAll<HTMLElement>('[data-i18n]'))node.textContent=t(node.dataset.i18n as Key);
+ for(const node of document.querySelectorAll<HTMLElement>('[data-i18n-label]'))node.setAttribute('aria-label',t(node.dataset.i18nLabel as Key));
+ for(const node of document.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]'))node.placeholder=t(node.dataset.i18nPlaceholder as Key);
+ const button=$('language');button.lang=htmlLang(language==='zh'?'en':'zh');
+}
+function switchLanguage(){
+ language=language==='zh'?'en':'zh';saveLanguage(storage(),language);applyLanguage();render();
+ if(document.body.dataset.link==='down')showLinkDown();
+ if(openedLog)void openLog(openedLog.host,openedLog.unit);
+}
+applyLanguage();
+$('language').addEventListener('click',switchLanguage);$('refresh').addEventListener('click',refresh);$('reset-order').addEventListener('click',()=>{clearOrder(storage());render();});$('search').addEventListener('input',rows);$('filter').addEventListener('change',rows);
 $('move-tab-left').addEventListener('click',()=>moveSelectedTab(-1));$('move-tab-right').addEventListener('click',()=>moveSelectedTab(1));
 $('reset-tab-order').addEventListener('click',()=>{tabState.order=[...DEFAULT_TAB_ORDER];saveTabs();const host=fleet?.hosts.find(item=>item.name===selected);if(host)renderTabs(host);});
 $('log-close').addEventListener('click',closeLog);$('log-refresh').addEventListener('click',()=>{if(openedLog)void openLog(openedLog.host,openedLog.unit);});

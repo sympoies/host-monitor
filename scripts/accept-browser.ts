@@ -10,7 +10,7 @@ const playwrightRoot=process.env.HOST_MONITOR_PLAYWRIGHT_ROOT;
 const require=createRequire(playwrightRoot?path.join(path.resolve(playwrightRoot),'package.json'):import.meta.url);const {chromium}=require('playwright');
 const browser=await chromium.launch({channel:'chrome',headless:false,chromiumSandbox:true});
 try{
- const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors:string[]=[];let checkedLogs=0;
+ const page=await browser.newPage({locale:'zh-TW',viewport:{width:1440,height:1000}});const errors:string[]=[];let checkedLogs=0;
  page.on('pageerror',(e:Error)=>errors.push(e.message));
  await page.goto(url);await page.locator('#hosts .host').first().waitFor();
  assert.equal(await page.locator('#hosts .host').count(),hosts.length);

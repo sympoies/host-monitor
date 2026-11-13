@@ -1,6 +1,8 @@
 // Resource assertions for installed-data acceptance. Fixture interaction is covered by accept-detail.ts.
 export const EXTERNAL_RESOURCE_TEXT='Beszel';
-export const AGENTLESS_TEXT='僅 ssh 基本資訊';
+import {dictionaries} from '../public/i18n.ts';
+// Acceptance runs the page in Traditional Chinese (see the browser locale in each script).
+export const AGENTLESS_TEXT=dictionaries.zh['summary.agentless'];
 export type ResourceExpectation=
  |{resources:'collected';metrics:number;diskRows:boolean}
  |{resources:'external'|'agentless';metrics:number;diskRows:boolean;text:string};

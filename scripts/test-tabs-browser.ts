@@ -31,7 +31,7 @@ server.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('liste
 const address=server.address();if(!address||typeof address==='string')throw Error('test server did not bind');
 const browser=await chromium.launch({channel:'chrome',headless:true,chromiumSandbox:true});
 try{
- const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors:string[]=[];page.on('pageerror',(error:Error)=>errors.push(error.message));
+ const page=await browser.newPage({locale:'zh-TW',viewport:{width:1440,height:1000}});const errors:string[]=[];page.on('pageerror',(error:Error)=>errors.push(error.message));
  if(regressionCase==='r4')apiFixture={...fixture,defaultOrder:['agentless-a','linux-a','android-a']};
  await page.goto(`http://127.0.0.1:${address.port}`);await page.locator('#hosts .host').first().waitFor();
  if(regressionCase){
@@ -44,15 +44,15 @@ try{
    assert.deepEqual({activeId,detailsOpen},{activeId:'tab-agents',detailsOpen:false},'poll should preserve focused tab and session disclosure choices');
   }else if(regressionCase==='r2'){
    await page.getByRole('tab',{name:'工作階段'}).click();const filters=page.locator('#agent-session-filters');
-   await filters.getByRole('tab',{name:/All/}).focus();await page.keyboard.press('ArrowRight');
-   const working=filters.getByRole('tab',{name:/Working/});assert.equal(await working.getAttribute('aria-selected'),'true');
+   await filters.getByRole('tab',{name:/全部/}).focus();await page.keyboard.press('ArrowRight');
+   const working=filters.getByRole('tab',{name:/工作中/});assert.equal(await working.getAttribute('aria-selected'),'true');
    assert.equal(await working.evaluate((node:any)=>node===(globalThis as any).document.activeElement),true,'filter arrow navigation should retain focus after redraw');
-   await page.keyboard.press('ArrowRight');const waiting=filters.getByRole('tab',{name:/Waiting \/ idle/});
+   await page.keyboard.press('ArrowRight');const waiting=filters.getByRole('tab',{name:/等待 \/ 待命/});
    assert.equal(await waiting.getAttribute('aria-selected'),'true','a second arrow should advance to the next filter');
    assert.equal(await waiting.evaluate((node:any)=>node===(globalThis as any).document.activeElement),true);
   }else if(regressionCase==='r3'){
    await page.getByRole('tab',{name:'服務'}).click();await page.locator('.tab-order-menu summary').click();
-   const left=page.getByRole('button',{name:'Move selected tab left'});await left.click();await left.click();
+   const left=page.getByRole('button',{name:'將選取的分頁向左移動'});await left.click();await left.click();
    assert.deepEqual(await page.locator('#host-tabs [role=tab]').evaluateAll((nodes:any[])=>nodes.map(node=>node.dataset.tab)),['agents','disks','services','checks','events'],'repeated move-left actions should follow the current saved order');
   }else if(regressionCase==='r4'){
    await page.locator('#host-filters').getByRole('tab',{name:/正常/}).click();
@@ -76,42 +76,42 @@ try{
  assert.deepEqual(await tabs.allTextContents(),['工作階段','磁碟容量','功能檢查與最近錯誤','最近事件','服務']);
  assert.equal(await page.locator('#attention').isVisible(),true);
  await page.locator('#host-filters').getByRole('tab',{name:/需要關注/}).click();assert.equal(await page.locator('#hosts .host').count(),1);
- await page.locator('#host-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#hosts .host').count(),3);
+ await page.locator('#host-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#hosts .host').count(),3);
  for(const tab of await tabs.all()){
   await tab.click();assert.equal(await tab.getAttribute('aria-selected'),'true');
   const panel=page.locator(`#${await tab.getAttribute('aria-controls')}`);assert.equal(await panel.isVisible(),true);
  }
  await page.getByRole('tab',{name:'工作階段'}).click();
- await page.locator('#agent-session-filters').getByRole('tab',{name:/Working/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),2);
- await page.locator('#agent-session-filters').getByRole('tab',{name:/Waiting \/ idle/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),3);
- await page.locator('#agent-session-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),6);
+ await page.locator('#agent-session-filters').getByRole('tab',{name:/工作中/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),2);
+ await page.locator('#agent-session-filters').getByRole('tab',{name:/等待 \/ 待命/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),3);
+ await page.locator('#agent-session-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#agent-sessions .agent-session:visible').count(),6);
  await page.getByRole('tab',{name:'服務'}).click();
- await page.getByRole('tab',{name:/Needs attention/}).click();assert.equal(await page.locator('#services tr').count(),1);
- await page.locator('#service-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#services tr').count(),3);
+ await page.locator('#service-filters').getByRole('tab',{name:/需要關注/}).click();assert.equal(await page.locator('#services tr').count(),1);
+ await page.locator('#service-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#services tr').count(),3);
  await page.getByRole('tab',{name:'功能檢查與最近錯誤'}).click();
- await page.locator('#checks-filters').getByRole('tab',{name:/Needs attention/}).click();assert.equal(await page.locator('#checks .check').count(),2);
- await page.locator('#checks-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#checks .check').count(),3);
+ await page.locator('#checks-filters').getByRole('tab',{name:/需要關注/}).click();assert.equal(await page.locator('#checks .check').count(),2);
+ await page.locator('#checks-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#checks .check').count(),3);
  await page.getByRole('tab',{name:'磁碟容量'}).click();
- await page.locator('#disk-filters').getByRole('tab',{name:/Warning/}).click();assert.equal(await page.locator('#disks .disk').count(),1);
- await page.locator('#disk-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#disks .disk').count(),2);
+ await page.locator('#disk-filters').getByRole('tab',{name:/警告/}).click();assert.equal(await page.locator('#disks .disk').count(),1);
+ await page.locator('#disk-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#disks .disk').count(),2);
  await page.getByRole('tab',{name:'最近事件'}).click();
  await page.locator('#events-filters').getByRole('tab',{name:/需要關注/}).click();assert.equal(await page.locator('#events .event').count(),1);
- await page.locator('#events-filters').getByRole('tab',{name:/All/}).click();assert.equal(await page.locator('#events .event').count(),2);
+ await page.locator('#events-filters').getByRole('tab',{name:/全部/}).click();assert.equal(await page.locator('#events .event').count(),2);
  await page.keyboard.press('ArrowRight');
  assert.deepEqual(await page.locator('#host-tabs [role=tab][aria-selected=true]').count(),1);
- await page.locator('.tab-order-menu summary').click();await page.getByRole('button',{name:'Move selected tab left'}).click();
+ await page.locator('.tab-order-menu summary').click();await page.getByRole('button',{name:'將選取的分頁向左移動'}).click();
  const beforeDrag=await tabs.allTextContents();await page.getByRole('tab',{name:'磁碟容量'}).dragTo(page.getByRole('tab',{name:'服務'}));
  const draggedOrder=await tabs.allTextContents();assert.notDeepEqual(draggedOrder,beforeDrag,'desktop drag should reorder tabs');
  await page.reload();await page.getByRole('tablist',{name:'主機詳情區段'}).waitFor();assert.deepEqual(await tabs.allTextContents(),draggedOrder,'tab order should persist');
  await page.locator('.tab-order-menu summary').click();
- await page.getByRole('button',{name:'Reset tab order'}).click();
+ await page.getByRole('button',{name:'重設分頁順序'}).click();
  await page.getByRole('tab',{name:'工作階段'}).click();await page.reload();await page.getByRole('tablist',{name:'主機詳情區段'}).waitFor();
  assert.equal(await page.getByRole('tab',{name:'工作階段'}).getAttribute('aria-selected'),'true','last selected tab should persist');
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>(globalThis as any).document.documentElement.scrollWidth<=(globalThis as any).innerWidth),'390px viewport has horizontal page overflow');
  assert.ok(await page.locator('#agent-sessions .session-title').evaluateAll((nodes:Array<{scrollWidth:number;clientWidth:number}>)=>nodes.every(node=>node.scrollWidth<=node.clientWidth)),'session titles should wrap instead of clipping');
  await page.locator('.tab-order-menu summary').click();
- await page.getByRole('button',{name:'Move selected tab right'}).waitFor();
+ await page.getByRole('button',{name:'將選取的分頁向右移動'}).waitFor();
  await page.getByRole('tab',{name:'工作階段'}).waitFor();
  if(screenshotDir){await page.locator('.tab-order-menu summary').click();await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:path.join(screenshotDir,'desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(screenshotDir,'mobile.png'),fullPage:true});}
  await page.locator('#hosts .host').filter({hasText:'agentless-a'}).click();
