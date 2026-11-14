@@ -47,13 +47,12 @@ try{
    }
   }
   const all=seen.join('\n'),data=JSON.stringify([fleet,events]);// text that comes from the synthetic data is not translated
-  // The switch names the other language in that language, so its own label is the one expected Chinese text.
-  const leftovers=all.split('\n').filter(line=>cjk.test(line)&&line!==dictionaries.en['lang.other']);
+  const leftovers=all.split('\n').filter(line=>cjk.test(line));
   if(language==='en')assert.deepEqual(leftovers.slice(0,5),[],`English ${label} UI has Chinese leftovers`);
   else for(const [key,value] of Object.entries(dictionaries.en)){
    // Placeholder-free English text that differs from its Chinese counterpart must never show in the Chinese UI (unless it is data).
    const chinese=(dictionaries.zh as Record<string,string>)[key];
-   if(!value.includes('{')&&value.length>=5&&!chinese.includes(value)&&!value.includes(chinese)&&!data.includes(value)&&all.includes(value))assert.fail(`Chinese ${label} UI shows English text of ${key}: ${value}`);
+   if(key!=='lang.current'&&!value.includes('{')&&value.length>=5&&!chinese.includes(value)&&!value.includes(chinese)&&!data.includes(value)&&all.includes(value))assert.fail(`Chinese ${label} UI shows English text of ${key}: ${value}`);
   }
   await context.close();
  }
@@ -61,8 +60,8 @@ try{
  for(const [locale,from,to] of [['en-US','en','zh'],['zh-TW','zh','en']] as const){
   const context=await browser.newContext({locale,viewport:{width:1440,height:1000}}),page=await context.newPage();await page.goto(base);await page.locator('#hosts .host').first().waitFor();
   const html=page.locator('html'),switcher=page.locator('#language');
-  assert.equal(await html.getAttribute('lang'),from==='zh'?'zh-Hant':'en');assert.equal(await switcher.innerText(),dictionaries[from]['lang.other']);
-  await switcher.click();assert.equal(await html.getAttribute('lang'),to==='zh'?'zh-Hant':'en');assert.equal(await page.title(),dictionaries[to].title);
+  assert.equal(await html.getAttribute('lang'),from==='zh'?'zh-Hant':'en');assert.equal(await switcher.innerText(),from==='zh'?'中文':'English');assert.equal(await switcher.getAttribute('aria-label'),dictionaries[from]['lang.switch']);assert.equal(await page.locator('#language-label').getAttribute('lang'),from==='zh'?'zh-Hant':'en');
+  await switcher.click();assert.equal(await html.getAttribute('lang'),to==='zh'?'zh-Hant':'en');assert.equal(await switcher.innerText(),to==='zh'?'中文':'English');assert.equal(await switcher.getAttribute('aria-label'),dictionaries[to]['lang.switch']);assert.equal(await page.title(),dictionaries[to].title);
   await page.reload();await page.locator('#hosts .host').first().waitFor();
   assert.equal(await html.getAttribute('lang'),to==='zh'?'zh-Hant':'en','the choice survives a reload');
   assert.equal(await page.locator('#refresh').innerText(),dictionaries[to].refresh);
