@@ -31,3 +31,7 @@ test('translate fills placeholders and each language uses its own text',()=>{
  assert.notEqual(translate('zh','refresh'),translate('en','refresh'));
  assert.equal(translate('en','age.minutes',{n:5}),'5 min ago');assert.equal(translate('zh','age.minutes',{n:5}),'5 分鐘前');
 });
+
+test('language button text identifies the current language',()=>{
+ assert.equal(dictionaries.zh['lang.current'],'中文');assert.equal(dictionaries.en['lang.current'],'English');
+});

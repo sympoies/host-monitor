@@ -305,7 +305,7 @@ function applyLanguage(){
  for(const node of document.querySelectorAll<HTMLElement>('[data-i18n]'))node.textContent=t(node.dataset.i18n as Key);
  for(const node of document.querySelectorAll<HTMLElement>('[data-i18n-label]'))node.setAttribute('aria-label',t(node.dataset.i18nLabel as Key));
  for(const node of document.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]'))node.placeholder=t(node.dataset.i18nPlaceholder as Key);
- $('language-label').lang=htmlLang(language==='zh'?'en':'zh');
+ $('language-label').lang=htmlLang(language);
 }
 function switchLanguage(){
  language=language==='zh'?'en':'zh';saveLanguage(storage(),language);applyLanguage();render();
